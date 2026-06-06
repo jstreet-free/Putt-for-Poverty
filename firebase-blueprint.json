@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Participant": {
+      "title": "Participant",
+      "description": "A registered golfer for the event.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "golfClub": { "type": "string" },
+        "course": { "type": "string" },
+        "handicap": { "type": "number" },
+        "paidRounds": { "type": "number", "default": 0 },
+        "usedRounds": { "type": "number", "default": 0 },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "label": { "type": "string" }
+          }
+        },
+        "score": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "golfClub", "handicap"]
+    },
+    "Sponsor": {
+      "title": "Sponsor",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "logo": { "type": "string" },
+        "tagline": { "type": "string" },
+        "order": { "type": "number" }
+      }
+    },
+    "ScoreEntry": {
+      "title": "Score Entry",
+      "description": "A score submission for a round.",
+      "type": "object",
+      "properties": {
+        "participantId": { "type": "string" },
+        "date": { "type": "string" },
+        "points": { "type": "number" },
+        "holes": { "type": "array" },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/participants/{userId}": {
+      "schema": "Participant",
+      "description": "Participant profile and registration status."
+    },
+    "/scores/{scoreId}": {
+      "schema": "ScoreEntry",
+      "description": "Score submissions."
+    }
+  }
+}

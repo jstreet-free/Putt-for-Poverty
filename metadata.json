@@ -1,0 +1,6 @@
+{
+  "name": "Putt for Poverty",
+  "description": "A charity golf event app for free@last, featuring live leaderboards, global participant mapping, and integrated Stripe payments.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["Firebase", "Stripe", "Google Maps"]
+}

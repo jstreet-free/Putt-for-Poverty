@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isAdmin() { 
+      return isSignedIn() && 
+             (request.auth.token.email == 'jstreet@freeatlast.st' || 
+              get(/databases/$(database)/documents/participants/$(request.auth.uid)).data.role == 'admin'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { 
+      return id is string && id.size() > 0 && id.size() <= 256; 
+    }
+
+    function isValidParticipant(data) {
+      return data.keys().hasAll(['userId', 'name', 'golfClub', 'handicap']) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.golfClub is string && data.golfClub.size() > 0 && data.golfClub.size() < 200 &&
+             data.handicap is number;
+    }
+
+    // --- Collections ---
+
+    match /participants/{userId} {
+      allow get: if isSignedIn(); 
+      allow list: if true; 
+      
+      allow create: if isOwner(userId) && 
+                     isValidId(userId) &&
+                     isValidParticipant(incoming()) &&
+                     incoming().get('paidRounds', 0) == 0 &&
+                     incoming().get('usedRounds', 0) == 0 &&
+                     incoming().get('role', 'user') == 'user';
+      
+      allow update: if (isOwner(userId) && 
+                     isValidParticipant(incoming()) && (
+                       // Action: Update profile/location
+                       (incoming().diff(existing()).affectedKeys().hasOnly(['location', 'updatedAt', 'name', 'golfClub', 'course', 'handicap'])) ||
+                       // Action: Score update (consuming a round is handled by server or strict client logic)
+                       (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']))
+                     )) || isAdmin();
+
+      match /private/info {
+        allow get: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId) && 
+                               incoming().email is string && 
+                               incoming().email.size() < 256;
+      }
+    }
+
+    match /sponsors/{sponsorId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /scores/{scoreId} {
+      allow read: if true;
+      allow create: if isSignedIn() && 
+                    isValidId(scoreId) &&
+                    incoming().participantId == request.auth.uid &&
+                    incoming().points is number &&
+                    incoming().points >= 0 &&
+                    incoming().points <= 100;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
