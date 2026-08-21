@@ -23,7 +23,7 @@ export function Home({ participant }: { participant: any }) {
       <section className="relative h-[600px] flex items-center overflow-hidden rounded-3xl mx-4 bg-emerald-900 border-4 border-emerald-800 shadow-2xl">
         <div className="absolute inset-0 z-0 opacity-40">
           <img 
-            src="https://images.unsplash.com/photo-1587174416062-6df593d6f400?q=80&w=2070&auto=format&fit=crop" 
+            src="https://www.pantherrungolfclub.com/images/golf_facts.jpg" 
             alt="Golf Course"
             className="w-full h-full object-cover"
           />

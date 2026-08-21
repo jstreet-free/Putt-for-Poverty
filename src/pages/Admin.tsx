@@ -25,6 +25,16 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
     return () => { unsubParts(); unsubSponsors(); };
   }, []);
 
+const handleToggleAdmin = async (p: Participant) => {
+  const newRole = p.role === 'admin' ? 'user' : 'admin';
+  if (!confirm(`Make ${p.name} ${newRole === 'admin' ? 'an admin' : 'a regular user'}?`)) return;
+  try {
+    await setDoc(doc(db, 'participants', p.id), { role: newRole }, { merge: true });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `participants/${p.id}`);
+  }
+};
+
   const handleSaveSponsor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSponsor?.name) return;
@@ -97,6 +107,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Club & Course</th>
                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Rounds</th>
                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Location</th>
+                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Role</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 text-slate-600">
@@ -120,6 +131,16 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                           <MapPin size={12} className="shrink-0" />
                           <span className="truncate max-w-[150px]">{p.location?.label || 'Not set'}</span>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          onClick={() => handleToggleAdmin(p)}
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
+                            p.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {p.role === 'admin' ? 'Admin' : 'Make Admin'}
+                        </button>
                       </td>
                     </tr>
                   ))}
