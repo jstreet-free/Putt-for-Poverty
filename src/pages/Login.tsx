@@ -5,6 +5,7 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -30,6 +31,7 @@ export function Login({ user }: { user: any }) {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   const redirectTo = (location.state as { from?: string })?.from || '/register';
 
@@ -39,7 +41,29 @@ export function Login({ user }: { user: any }) {
     }
   }, [user, redirectTo, navigate]);
 
-  const resetError = () => setError(null);
+  const resetError = () => {
+    setError(null);
+    setResetMessage(null);
+  };
+
+  const handlePasswordReset = async () => {
+    resetError();
+    if (!email) {
+      setError('Enter your email address first.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetMessage('Password reset email sent. Check your inbox.');
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? `Password reset failed: ${err.message}` : 'Password reset failed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleGoogleSignIn = async () => {
     resetError();
@@ -174,6 +198,12 @@ export function Login({ user }: { user: any }) {
             </div>
           )}
 
+          {resetMessage && (
+            <div className="bg-emerald-50 border-2 border-emerald-100 text-emerald-700 px-4 py-3 rounded-xl font-bold text-sm">
+              {resetMessage}
+            </div>
+          )}
+
           <button
             onClick={handleGoogleSignIn}
             disabled={isSubmitting}
@@ -244,6 +274,14 @@ export function Login({ user }: { user: any }) {
                 >
                   {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <LogIn size={18} />}
                   {isSubmitting ? 'LOGGING IN...' : 'LOG IN'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePasswordReset}
+                  disabled={isSubmitting}
+                  className="w-full text-sm font-bold text-emerald-600 hover:underline disabled:opacity-50"
+                >
+                  Forgot password?
                 </button>
               </motion.form>
             )}
