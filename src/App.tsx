@@ -12,6 +12,7 @@ import { Rules } from './pages/Rules';
 import { ScoreUpload } from './pages/ScoreUpload';
 import { Admin } from './pages/Admin';
 import { motion, AnimatePresence } from 'motion/react';
+import { Login } from './pages/Login';
 
 import { APIProvider } from '@vis.gl/react-google-maps';
 
@@ -66,13 +67,14 @@ export default function App() {
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<Home participant={participant} />} />
-            <Route path="/leaderboard" element={<Leaderboard />} />
+            <Route path="/leaderboard" element={<Leaderboard user={user} />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/rules" element={<Rules />} />
             <Route 
               path="/register" 
-              element={user ? <Register user={user} participant={participant} /> : <Navigate to="/" />} 
+              element={user ? <Register user={user} participant={participant} /> : <Navigate to="/login" state={{ from: '/register' }} />} 
             />
+            <Route path="/login" element={<Login user={user} />} />
             <Route 
               path="/admin" 
               element={(user && (participant?.role === 'admin' || user.email === 'jstreet@freeatlast.st')) ? <Admin user={user} participant={participant} /> : <Navigate to="/" />} 

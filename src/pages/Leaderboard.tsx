@@ -1,18 +1,19 @@
 import { useState, useEffect } from 'react';
-import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
-import { Trophy, Medal, User, Flag, ArrowUp, ArrowDown, Info } from 'lucide-react';
+import { Trophy, Medal, User, Flag, ArrowUp, Info } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Participant } from '../types';
+import type { User as FirebaseUser } from 'firebase/auth';
 
-export function Leaderboard() {
+export function Leaderboard({ user }: { user: FirebaseUser | null }) {
+  const navigate = useNavigate();
   const [scores, setScores] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // In a real app, you'd filter by the event dates June 21-22
     const q = query(
       collection(db, 'participants'),
       orderBy('score', 'desc'),
@@ -40,6 +41,16 @@ export function Leaderboard() {
       case 1: return <Medal className="text-slate-400" size={24} />;
       case 2: return <Medal className="text-amber-700" size={24} />;
       default: return <span className="text-slate-400 font-bold">{index + 1}</span>;
+    }
+  };
+
+  // Signed-in users go straight to their profile page.
+  // Signed-out users go to login first, then get bounced on to /register.
+  const handleGetReadyToPlay = () => {
+    if (user) {
+      navigate('/register');
+    } else {
+      navigate('/login', { state: { from: '/register' } });
     }
   };
 
@@ -114,15 +125,18 @@ export function Leaderboard() {
                 <p className="text-xl font-black text-slate-800">No scores yet!</p>
                 <p className="text-slate-500 font-medium">The scoreboard will spring to life on June 21st.</p>
               </div>
-              <Link to="/register" className="inline-block mt-4 bg-emerald-600 text-white px-8 py-3 rounded-full font-bold">
+              <button
+                onClick={handleGetReadyToPlay}
+                className="inline-block mt-4 bg-emerald-600 text-white px-8 py-3 rounded-full font-bold hover:bg-emerald-700 transition-colors"
+              >
                 Get Ready to Play
-              </Link>
+              </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Info Card */}
+
       <div className="bg-emerald-900 rounded-3xl p-8 text-white flex flex-col md:flex-row items-center gap-8 overflow-hidden relative">
         <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-600/50 rounded-full blur-3xl -mr-16 -mt-16" />
         <div className="bg-emerald-800 p-4 rounded-2xl">
