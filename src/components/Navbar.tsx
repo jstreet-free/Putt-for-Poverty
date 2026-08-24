@@ -36,7 +36,7 @@ export function Navbar({ user, participant }: { user: any, participant: any }) {
     { name: 'The Rules', path: '/rules', icon: ScrollText },
   ];
 
-  const isAdmin = participant?.role === 'admin' || user?.email === 'jstreet@freeatlast.st';
+  const isAdmin = participant?.role === 'admin' || user?.email === 'admin@gmail.com';
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">

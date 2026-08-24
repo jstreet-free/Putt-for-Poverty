@@ -13,6 +13,7 @@ import { ScoreUpload } from './pages/ScoreUpload';
 import { Admin } from './pages/Admin';
 import { motion, AnimatePresence } from 'motion/react';
 import { Login } from './pages/Login';
+import { AdminUsers } from './pages/AdminUsers';
 
 import { APIProvider } from '@vis.gl/react-google-maps';
 
@@ -74,10 +75,14 @@ export default function App() {
               path="/register" 
               element={user ? <Register user={user} participant={participant} /> : <Navigate to="/login" state={{ from: '/register' }} />} 
             />
+            <Route 
+              path="/admin/users" 
+              element={(user && (participant?.role === 'admin' || user.email === 'admin@gmail.com')) ? <AdminUsers /> : <Navigate to="/" />} 
+            />
             <Route path="/login" element={<Login user={user} />} />
             <Route 
               path="/admin" 
-              element={(user && (participant?.role === 'admin' || user.email === 'jstreet@freeatlast.st')) ? <Admin user={user} participant={participant} /> : <Navigate to="/" />} 
+              element={(user && (participant?.role === 'admin' || user.email === 'admin@gmail.com')) ? <Admin user={user} participant={participant} /> : <Navigate to="/" />} 
             />
             <Route 
               path="/upload" 
