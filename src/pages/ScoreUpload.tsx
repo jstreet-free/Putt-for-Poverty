@@ -17,7 +17,6 @@ export function ScoreUpload({ user, participant }: { user: any, participant: any
 
     setIsSubmitting(true);
     try {
-      // 1. Log the score entry
       await addDoc(collection(db, 'scores'), {
         participantId: user.uid,
         name: participant.name,
@@ -26,7 +25,6 @@ export function ScoreUpload({ user, participant }: { user: any, participant: any
         golfClub: participant.golfClub,
       });
 
-      // 2. Update the participant's total score and consumption of a paid round
       await updateDoc(doc(db, 'participants', user.uid), {
         score: totalPoints,
         usedRounds: increment(1),

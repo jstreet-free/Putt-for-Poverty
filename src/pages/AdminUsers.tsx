@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { db } from '../lib/firebase';
 import {
-  collection, query, orderBy, limit, startAt, endAt,
-  startAfter, getDocs, QueryDocumentSnapshot, DocumentData,
+  collection, query, orderBy, limit,
+  startAfter, getDocs, documentId,
+  QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import {
   Search, Users, X, Mail, MapPin, Trophy, FileCheck,
@@ -40,41 +41,28 @@ export function AdminUsers() {
   const [selectedUser, setSelectedUser] = useState<AdminParticipant | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const runQuery = async (opts: { search?: string; cursor?: QueryDocumentSnapshot<DocumentData> | null }) => {
-    const base = collection(db, 'participants');
-    const term = opts.search?.trim().toLowerCase();
-
-    let q;
-    if (term) {
-      q = query(
-        base,
-        orderBy('emailLower'),
-        startAt(term),
-        endAt(term + '\uf8ff'),
-        limit(PAGE_SIZE)
-      );
-    } else if (opts.cursor) {
-      q = query(base, orderBy('emailLower'), startAfter(opts.cursor), limit(PAGE_SIZE));
-    } else {
-      q = query(base, orderBy('emailLower'), limit(PAGE_SIZE));
-    }
+  const runQuery = async (opts: { cursor?: QueryDocumentSnapshot<DocumentData> | null }) => {
+    const base = collection(db, 'users');
+    const q = opts.cursor
+      ? query(base, orderBy(documentId()), startAfter(opts.cursor), limit(PAGE_SIZE))
+      : query(base, orderBy(documentId()), limit(PAGE_SIZE));
 
     const snap = await getDocs(q);
     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as AdminParticipant));
     return { docs, lastVisible: snap.docs[snap.docs.length - 1] || null, count: snap.docs.length };
   };
 
-  const loadFirstPage = async (search: string) => {
+  const loadFirstPage = async () => {
     setLoading(true);
     setError(null);
     try {
-      const { docs, lastVisible, count } = await runQuery({ search });
+      const { docs, lastVisible, count } = await runQuery({});
       setUsers(docs);
       setLastDoc(lastVisible);
       setHasMore(count === PAGE_SIZE);
     } catch (err) {
       console.error(err);
-      setError('Failed to load users. You may need a Firestore index for this query \u2014 check the browser console for a create-index link.');
+      setError('Failed to load users. You may need Firestore rules that allow an admin to list all participants \u2014 check the browser console for details.');
     } finally {
       setLoading(false);
     }
@@ -84,7 +72,7 @@ export function AdminUsers() {
     if (!hasMore || loadingMore) return;
     setLoadingMore(true);
     try {
-      const { docs, lastVisible, count } = await runQuery({ search: searchTerm, cursor: lastDoc });
+      const { docs, lastVisible, count } = await runQuery({ cursor: lastDoc });
       setUsers(prev => [...prev, ...docs]);
       setLastDoc(lastVisible);
       setHasMore(count === PAGE_SIZE);
@@ -96,17 +84,21 @@ export function AdminUsers() {
     }
   };
 
-  // Initial load
   useState(() => {
-    loadFirstPage('');
+    loadFirstPage();
   });
 
-  let searchDebounce: ReturnType<typeof setTimeout>;
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(() => loadFirstPage(value), 350);
   };
+
+  const filteredUsers = searchTerm.trim()
+    ? users.filter(u => {
+        const term = searchTerm.trim().toLowerCase();
+        return (u.email || '').toLowerCase().includes(term) ||
+               (u.name || '').toLowerCase().includes(term);
+      })
+    : users;
 
   const formatDate = (iso?: string) => {
     if (!iso) return 'Unknown';
@@ -137,7 +129,7 @@ export function AdminUsers() {
           type="text"
           value={searchTerm}
           onChange={(e) => handleSearchChange(e.target.value)}
-          placeholder="Search by email..."
+          placeholder="Search by name or email (loaded users only)..."
           className="w-full bg-white border-2 border-slate-100 rounded-2xl p-4 pl-14 font-bold text-slate-900 focus:border-blue-500 outline-none transition-colors shadow-sm"
         />
       </div>
@@ -155,13 +147,13 @@ export function AdminUsers() {
             <Loader2 size={32} className="animate-spin" />
             Loading users...
           </div>
-        ) : users.length === 0 ? (
+        ) : filteredUsers.length === 0 ? (
           <div className="p-24 text-center text-slate-400 font-bold">
             No users found{searchTerm ? ` for "${searchTerm}"` : ''}.
           </div>
         ) : (
           <div className="divide-y divide-slate-50">
-            {users.map((u) => (
+            {filteredUsers.map((u) => (
               <button
                 key={u.id}
                 onClick={() => setSelectedUser(u)}
@@ -195,7 +187,7 @@ export function AdminUsers() {
           </div>
         )}
 
-        {!loading && hasMore && !searchTerm && (
+        {!loading && hasMore && (
           <div className="p-4 border-t border-slate-50">
             <button
               onClick={loadMore}

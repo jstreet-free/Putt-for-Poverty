@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { useNavigate } from 'react-router-dom';
 
-export function Navbar({ user, participant }: { user: any, participant: any }) {
+export function Navbar({ user, userDoc, participant }: { user: any, userDoc: any, participant: any }) {
   const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
@@ -36,7 +36,7 @@ export function Navbar({ user, participant }: { user: any, participant: any }) {
     { name: 'The Rules', path: '/rules', icon: ScrollText },
   ];
 
-  const isAdmin = participant?.role === 'admin' || user?.email === 'admin@gmail.com';
+  const isAdmin = userDoc?.role === 'admin' || user?.email === 'admin@gmail.com';
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">

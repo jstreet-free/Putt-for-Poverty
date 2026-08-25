@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { auth, db, storage } from '../lib/firebase';
+import { db, auth, storage, ensureUserDoc } from '../lib/firebase';
 import {
   GoogleAuthProvider,
   signInWithPopup,
@@ -70,7 +70,8 @@ export function Login({ user }: { user: any }) {
     setIsSubmitting(true);
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      const cred = await signInWithPopup(auth, provider);
+      await ensureUserDoc(cred.user);
       navigate(redirectTo, { replace: true });
     } catch (err) {
       console.error(err);
@@ -81,12 +82,14 @@ export function Login({ user }: { user: any }) {
   };
 
   const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    resetError();
-    setIsSubmitting(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      navigate(redirectTo, { replace: true });
+  e.preventDefault();
+  resetError();
+  setIsSubmitting(true);
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    await ensureUserDoc(cred.user);
+    navigate(redirectTo, { replace: true });
+
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? `Login failed: ${err.message}` : 'Login failed. Please try again.');
@@ -96,25 +99,26 @@ export function Login({ user }: { user: any }) {
   };
 
   const handleEmailSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    resetError();
-    setIsSubmitting(true);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
+  e.preventDefault();
+  resetError();
+  setIsSubmitting(true);
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await ensureUserDoc(cred.user);
 
-      if (membershipFile) {
-        const fileRef = ref(storage, `membership-proofs/${cred.user.uid}/${membershipFile.name}`);
-        await uploadBytes(fileRef, membershipFile);
-        const url = await getDownloadURL(fileRef);
-        await setDoc(doc(db, 'participants', cred.user.uid), {
-          userId: cred.user.uid,
-          membershipProofUrl: url,
-          membershipProofFileName: membershipFile.name,
-          membershipProofUploadedAt: new Date().toISOString(),
-        }, { merge: true });
-      }
+    if (membershipFile) {
+      const fileRef = ref(storage, `membership-proofs/${cred.user.uid}/${membershipFile.name}`);
+      await uploadBytes(fileRef, membershipFile);
+      const url = await getDownloadURL(fileRef);
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        membershipProofUrl: url,
+        membershipProofFileName: membershipFile.name,
+        membershipProofUploadedAt: new Date().toISOString(),
+      }, { merge: true });
+    }
 
-      navigate(redirectTo, { replace: true });
+    navigate(redirectTo, { replace: true });
+
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? `Sign-up failed: ${err.message}` : 'Sign-up failed. Please try again.');
