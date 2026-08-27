@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
-import { doc, writeBatch } from 'firebase/firestore';
+import { doc, writeBatch, setDoc, getDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../lib/firebase';
 import { loadStripe } from '@stripe/stripe-js';
-import { UserCircle, MapPin, Trophy, CreditCard, CheckCircle, Flag, Loader2, XCircle } from 'lucide-react';
+import { UserCircle, MapPin, Trophy, CreditCard, CheckCircle, Flag, Loader2, XCircle, ShieldCheck, Upload, FileCheck, ExternalLink } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useMapsLibrary } from '@vis.gl/react-google-maps';
@@ -19,8 +21,11 @@ export function Register({ user, participant }: { user: any, participant: any })
   const [isSaving, setIsSaving] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'searching' | 'found' | 'error'>('idle');
+
+  const [membershipFile, setMembershipFile] = useState<File | null>(null);
+  const [isUploadingMembership, setIsUploadingMembership] = useState(false);
+  const [membershipStatus, setMembershipStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
-  // Form State
   const [formData, setFormData] = useState({
     name: user?.displayName || '',
     golfClub: '',
@@ -29,6 +34,32 @@ export function Register({ user, participant }: { user: any, participant: any })
     locationLabel: '',
   });
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+
+  useEffect(() => {
+    const loadDraftProfile = async () => {
+      if (!user || participant) return;
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (snap.exists()) {
+          const d = snap.data();
+          setFormData({
+            name: d.name || user.displayName || '',
+            golfClub: d.golfClub || '',
+            course: d.course || '',
+            handicap: d.handicap ?? 18,
+            locationLabel: d.location?.label || '',
+          });
+          if (d.location?.lat && d.location?.lng) {
+            setCoords({ lat: d.location.lat, lng: d.location.lng });
+            setGeocodingStatus('found');
+          }
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      }
+    };
+    loadDraftProfile();
+  }, [user]);
 
   useEffect(() => {
     const checkPayment = async () => {
@@ -80,7 +111,6 @@ export function Register({ user, participant }: { user: any, participant: any })
       setGeocodingStatus('found');
     } else {
       setCoords(null);
-      // Don't clear label immediately if they are just typing
     }
   };
 
@@ -93,7 +123,6 @@ export function Register({ user, participant }: { user: any, participant: any })
     setGeocodingStatus('searching');
     console.log('Starting geocode fallback for:', formData.locationLabel);
 
-    // Safety timeout to prevent permanent "searching" state
     const timeoutId = setTimeout(() => {
       setGeocodingStatus(prev => prev === 'searching' ? 'error' : prev);
       console.warn('Geocoding timed out');
@@ -121,30 +150,26 @@ export function Register({ user, participant }: { user: any, participant: any })
       setGeocodingStatus('error');
     }
   };
-
   const handlePayment = async () => {
     if (!user) return;
     setIsPaying(true);
     
     try {
       const finalLocation = coords ? { ...coords, label: formData.locationLabel } : null;
-      
-      const batch = writeBatch(db);
-      const partRef = doc(db, 'participants', user.uid);
-      const privateRef = doc(db, 'participants', user.uid, 'private', 'info');
+      const userRef = doc(db, 'users', user.uid);
+      const privateRef = doc(db, 'users', user.uid, 'private', 'info');
 
-      // Public data
-      batch.set(partRef, {
+      const batch = writeBatch(db);
+      batch.set(userRef, {
         name: formData.name,
         golfClub: formData.golfClub,
         course: formData.course,
-        handicap: formData.handicap,
+        handicap: Number(formData.handicap) || 0,
         location: finalLocation || { label: formData.locationLabel },
         userId: user.uid,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
 
-      // Private data (PII)
       batch.set(privateRef, {
         email: user.email,
         updatedAt: new Date().toISOString(),
@@ -152,7 +177,6 @@ export function Register({ user, participant }: { user: any, participant: any })
 
       await batch.commit();
 
-      // Create checkout session
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,7 +193,7 @@ export function Register({ user, participant }: { user: any, participant: any })
         await (stripe as any).redirectToCheckout({ sessionId: session.id });
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `participants/${user.uid}`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
       setIsPaying(false);
     }
   };
@@ -182,37 +206,81 @@ export function Register({ user, participant }: { user: any, participant: any })
     try {
       const finalLocation = coords ? { ...coords, label: formData.locationLabel } : null;
       const batch = writeBatch(db);
-      const partRef = doc(db, 'participants', user.uid);
-      const privateRef = doc(db, 'participants', user.uid, 'private', 'info');
+      const userRef = doc(db, 'users', user.uid);
+      const privateRef = doc(db, 'users', user.uid, 'private', 'info');
 
-      const dataToSave = {
+      const profileFields = {
         name: formData.name,
         golfClub: formData.golfClub,
         course: formData.course,
         handicap: Number(formData.handicap) || 0,
         location: finalLocation || { label: formData.locationLabel },
         userId: user.uid,
+        email: user.email,
+        emailLower: user.email?.toLowerCase() || '',
         updatedAt: new Date().toISOString(),
       };
 
-      console.log('Saving profile:', dataToSave);
+      console.log('Saving profile:', profileFields);
 
-      batch.set(partRef, dataToSave, { merge: true });
+      batch.set(userRef, profileFields, { merge: true });
 
       batch.set(privateRef, {
         email: user.email,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
 
+      // If this user has already paid (participant doc exists), keep their
+      // participant record in sync too, so leaderboard/admin views reflect edits.
+      if (participant) {
+        const partRef = doc(db, 'participants', user.uid);
+        batch.set(partRef, profileFields, { merge: true });
+      }
+
       await batch.commit();
       setSaveStatus('success');
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
       console.error('Save failed:', error);
-      handleFirestoreError(error, OperationType.WRITE, `participants/${user.uid}`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
       setSaveStatus('error');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleUploadMembership = async () => {
+    if (!user || !membershipFile) return;
+    setIsUploadingMembership(true);
+    setMembershipStatus('idle');
+    try {
+      const fileRef = ref(storage, `membership-proofs/${user.uid}/${membershipFile.name}`);
+      await uploadBytes(fileRef, membershipFile);
+      const url = await getDownloadURL(fileRef);
+
+      const membershipFields = {
+        userId: user.uid,
+        membershipProofUrl: url,
+        membershipProofFileName: membershipFile.name,
+        membershipProofUploadedAt: new Date().toISOString(),
+      };
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', user.uid), membershipFields, { merge: true });
+      if (participant) {
+        batch.set(doc(db, 'participants', user.uid), membershipFields, { merge: true });
+      }
+      await batch.commit();
+
+      setMembershipStatus('success');
+      setMembershipFile(null);
+      setTimeout(() => setMembershipStatus('idle'), 3000);
+    } catch (error) {
+      console.error('Membership upload failed:', error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      setMembershipStatus('error');
+    } finally {
+      setIsUploadingMembership(false);
     }
   };
 
@@ -376,6 +444,84 @@ export function Register({ user, participant }: { user: any, participant: any })
               </button>
             </div>
           </form>
+
+          {/* Golf Club Membership */}
+          <div className="bg-white p-8 rounded-[2rem] border-2 border-slate-100 shadow-xl space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+                <ShieldCheck size={22} />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-slate-800 tracking-tight">GOLF CLUB MEMBERSHIP</h2>
+                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Proof of membership at a recognised club</p>
+              </div>
+            </div>
+
+            {participant?.membershipProofUrl ? (
+              <div className="flex items-center justify-between gap-4 bg-emerald-50 border-2 border-emerald-100 rounded-2xl p-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <FileCheck size={20} className="text-emerald-600 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-bold text-emerald-800 truncate">
+                      {participant.membershipProofFileName || 'Membership document'}
+                    </p>
+                    <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Uploaded</p>
+                  </div>
+                </div>
+                <a
+                  href={participant.membershipProofUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-xs font-black text-emerald-700 hover:text-emerald-900 shrink-0"
+                >
+                  VIEW
+                  <ExternalLink size={14} />
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-orange-50 border-2 border-orange-100 text-orange-700 px-4 py-3 rounded-xl font-bold text-sm">
+                  No membership proof on file yet. Add one below to help us verify your entry.
+                </div>
+
+                {membershipStatus === 'success' && (
+                  <div className="bg-emerald-50 border-2 border-emerald-100 text-emerald-700 px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2">
+                    <CheckCircle size={18} />
+                    Membership document uploaded!
+                  </div>
+                )}
+                {membershipStatus === 'error' && (
+                  <div className="bg-rose-50 border-2 border-rose-100 text-rose-700 px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2">
+                    <XCircle size={18} />
+                    Upload failed. Please try again.
+                  </div>
+                )}
+
+                <label className="flex items-center gap-3 w-full bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-4 font-bold text-slate-500 cursor-pointer hover:border-emerald-400 hover:text-emerald-700 transition-colors">
+                  {membershipFile ? <FileCheck size={18} className="text-emerald-600 shrink-0" /> : <Upload size={18} className="shrink-0" />}
+                  <span className="truncate text-sm">
+                    {membershipFile ? membershipFile.name : 'Upload a photo or PDF of your membership'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    className="hidden"
+                    onChange={(e) => setMembershipFile(e.target.files?.[0] || null)}
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={handleUploadMembership}
+                  disabled={!membershipFile || isUploadingMembership}
+                  className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {isUploadingMembership ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                  {isUploadingMembership ? 'UPLOADING...' : 'UPLOAD MEMBERSHIP PROOF'}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Status Card */}

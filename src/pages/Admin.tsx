@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { Participant, Sponsor } from '../types';
-import { Users, Trophy, MapPin, Plus, Trash2, Edit2, ShieldCheck, CreditCard, Layout } from 'lucide-react';
+import { Users, Trophy, MapPin, Plus, Trash2, Edit2, ShieldCheck, CreditCard, Layout, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Link } from 'react-router-dom';
 
 export function Admin({ user, participant }: { user: any, participant: any }) {
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -24,6 +25,17 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
 
     return () => { unsubParts(); unsubSponsors(); };
   }, []);
+
+  const handleToggleAdmin = async (p: Participant) => {
+    const newRole = p.role === 'admin' ? 'user' : 'admin';
+    if (!confirm(`Make ${p.name} ${newRole === 'admin' ? 'an admin' : 'a regular user'}?`)) return;
+    try {
+      // role now lives on the `users` collection, not `participants`
+      await setDoc(doc(db, 'users', p.id), { role: newRole }, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${p.id}`);
+    }
+  };
 
   const handleSaveSponsor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +73,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
           <h1 className="text-5xl font-black text-slate-900 tracking-tight">ADMIN <span className="text-blue-600">HUB</span></h1>
           <p className="text-slate-500 font-medium">Monitoring the global Putt for Poverty leaderboard & participants.</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-3">
             <Users className="text-blue-500" />
             <div>
@@ -76,6 +88,14 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Funds Raised</div>
             </div>
           </div>
+          <Link
+            to="/admin/users"
+            className="bg-slate-900 text-white px-5 py-3 rounded-3xl font-black text-sm hover:bg-blue-600 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+          >
+            <Users size={18} />
+            USER DIRECTORY
+            <ArrowRight size={16} />
+          </Link>
         </div>
       </div>
 
@@ -97,6 +117,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Club & Course</th>
                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Rounds</th>
                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest">Location</th>
+                    <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Role</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 text-slate-600">
@@ -120,6 +141,16 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                           <MapPin size={12} className="shrink-0" />
                           <span className="truncate max-w-[150px]">{p.location?.label || 'Not set'}</span>
                         </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          onClick={() => handleToggleAdmin(p)}
+                          className={`text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
+                            p.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {p.role === 'admin' ? 'Admin' : 'Make Admin'}
+                        </button>
                       </td>
                     </tr>
                   ))}

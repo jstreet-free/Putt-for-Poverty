@@ -5,19 +5,30 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { useNavigate } from 'react-router-dom';
 
-export function Navbar({ user, participant }: { user: any, participant: any }) {
+export function Navbar({ user, userDoc, participant }: { user: any, userDoc: any, participant: any }) {
+  const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
 
+  const logOnPage = async () => {
+    navigate('/login', { state: { from: '/register' } });
+  }
+
   const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  const provider = new GoogleAuthProvider();
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (error) {
+    console.error(error);
+    alert(
+      error instanceof Error
+        ? `Sign-in failed: ${error.message}`
+        : 'Sign-in failed. Please try again.'
+    );
+  }
+};
 
   const navItems = [
     { name: 'Leaderboard', path: '/leaderboard', icon: Trophy },
@@ -25,7 +36,7 @@ export function Navbar({ user, participant }: { user: any, participant: any }) {
     { name: 'The Rules', path: '/rules', icon: ScrollText },
   ];
 
-  const isAdmin = participant?.role === 'admin' || user?.email === 'jstreet@freeatlast.st';
+  const isAdmin = userDoc?.role === 'admin' || user?.email === 'admin@gmail.com';
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
@@ -40,7 +51,6 @@ export function Navbar({ user, participant }: { user: any, participant: any }) {
           </div>
         </Link>
 
-        {/* Desktop Nav */}
         <div className="hidden md:flex items-center gap-6">
           {navItems.map((item) => (
             <Link
@@ -81,10 +91,10 @@ export function Navbar({ user, participant }: { user: any, participant: any }) {
             </div>
           ) : (
             <button
-              onClick={handleLogin}
-              className="bg-emerald-600 text-white px-5 py-2 rounded-full font-bold text-sm hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+              onClick={logOnPage}
+              className="bg-emerald-600 text-white px-5 py-2 rounded-full font-bold text-sm hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md flex items-center gap-2 cursor:pointer"
             >
-              <LogIn size={18} />
+              {/* <LogIn size={18} /> */}
               Join the Event
             </button>
           )}

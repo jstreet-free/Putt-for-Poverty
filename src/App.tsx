@@ -12,6 +12,8 @@ import { Rules } from './pages/Rules';
 import { ScoreUpload } from './pages/ScoreUpload';
 import { Admin } from './pages/Admin';
 import { motion, AnimatePresence } from 'motion/react';
+import { Login } from './pages/Login';
+import { AdminUsers } from './pages/AdminUsers';
 
 import { APIProvider } from '@vis.gl/react-google-maps';
 
@@ -19,33 +21,44 @@ const GOOGLE_MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [userDoc, setUserDoc] = useState<DocumentData | null>(null);
   const [participant, setParticipant] = useState<DocumentData | null>(null);
   const [loading, setLoading] = useState(true);
 
+
   useEffect(() => {
-    let unsubPart: (() => void) | null = null;
-    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
-      if (unsubPart) unsubPart();
-      setUser(u);
-      if (u) {
-        const partRef = doc(db, 'participants', u.uid);
-        unsubPart = onSnapshot(partRef, (doc) => {
-          setParticipant(doc.exists() ? doc.data() : null);
-          setLoading(false);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, `participants/${u.uid}`);
-          setLoading(false);
-        });
-      } else {
-        setParticipant(null);
+  let unsubUser: (() => void) | null = null;
+  let unsubPart: (() => void) | null = null;
+
+  const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
+    if (unsubUser) unsubUser();
+    if (unsubPart) unsubPart();
+    setUser(u);
+
+    if (u) {
+      unsubUser = onSnapshot(doc(db, 'users', u.uid), (snap) => {
+        setUserDoc(snap.exists() ? snap.data() : null);
+      });
+      unsubPart = onSnapshot(doc(db, 'participants', u.uid), (snap) => {
+        setParticipant(snap.exists() ? snap.data() : null);
         setLoading(false);
-      }
-    });
-    return () => {
-      unsubscribeAuth();
-      if (unsubPart) unsubPart();
-    };
-  }, []);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, `participants/${u.uid}`);
+        setLoading(false);
+      });
+    } else {
+      setUserDoc(null);
+      setParticipant(null);
+      setLoading(false);
+    }
+  });
+
+  return () => {
+    unsubscribeAuth();
+    if (unsubUser) unsubUser();
+    if (unsubPart) unsubPart();
+  };
+}, []);
 
   if (loading) {
     return (
@@ -61,22 +74,21 @@ export default function App() {
 
   const content = (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      <Navbar user={user} participant={participant} />
+      <Navbar user={user} userDoc={userDoc} participant={participant} />
       <main className="pt-16 pb-20 px-4 md:px-0">
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<Home participant={participant} />} />
-            <Route path="/leaderboard" element={<Leaderboard />} />
+            <Route path="/leaderboard" element={<Leaderboard user={user} />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/rules" element={<Rules />} />
             <Route 
               path="/register" 
-              element={user ? <Register user={user} participant={participant} /> : <Navigate to="/" />} 
+              element={user ? <Register user={user} participant={participant} /> : <Navigate to="/login" state={{ from: '/register' }} />} 
             />
-            <Route 
-              path="/admin" 
-              element={(user && (participant?.role === 'admin' || user.email === 'jstreet@freeatlast.st')) ? <Admin user={user} participant={participant} /> : <Navigate to="/" />} 
-            />
+            <Route path="/admin/users" element={(user && (userDoc?.role === 'admin' || user.email === 'admin@gmail.com')) ? <AdminUsers /> : <Navigate to="/" />} />
+            <Route path="/admin" element={(user && (userDoc?.role === 'admin' || user.email === 'admin@gmail.com')) ? <Admin user={user} participant={participant} /> : <Navigate to="/" />} />
+            <Route path="/login" element={<Login user={user} />} />
             <Route 
               path="/upload" 
               element={user && (participant?.paidRounds > participant?.usedRounds) ? <ScoreUpload user={user} participant={participant} /> : <Navigate to="/register" />} 
