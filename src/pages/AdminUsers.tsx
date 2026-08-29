@@ -122,7 +122,6 @@ export function AdminUsers() {
         </div>
       </div>
 
-      {/* Search */}
       <div className="relative">
         <Search size={20} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" />
         <input
@@ -140,7 +139,6 @@ export function AdminUsers() {
         </div>
       )}
 
-      {/* List */}
       <div className="bg-white rounded-[2rem] border-2 border-slate-100 shadow-xl overflow-hidden">
         {loading ? (
           <div className="p-24 text-center text-slate-400 font-bold flex flex-col items-center gap-3">
@@ -201,7 +199,6 @@ export function AdminUsers() {
         )}
       </div>
 
-      {/* Detail modal */}
       <AnimatePresence>
         {selectedUser && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">

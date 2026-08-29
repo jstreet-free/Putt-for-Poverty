@@ -44,8 +44,6 @@ export function Leaderboard({ user }: { user: FirebaseUser | null }) {
     }
   };
 
-  // Signed-in users go straight to their profile page.
-  // Signed-out users go to login first, then get bounced on to /register.
   const handleGetReadyToPlay = () => {
     if (user) {
       navigate('/register');

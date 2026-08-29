@@ -138,7 +138,6 @@ export function Login({ user }: { user: any }) {
   return (
     <div className="max-w-5xl mx-auto px-4 py-16">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-        {/* Left: pitch / context */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -179,7 +178,6 @@ export function Login({ user }: { user: any }) {
           </ul>
         </motion.div>
 
-        {/* Right: auth card */}
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -223,7 +221,7 @@ export function Login({ user }: { user: any }) {
             <div className="flex-1 h-px bg-slate-100" />
           </div>
 
-          {/* LOGIN MODE */}
+
           {mode === 'login' && !showEmailLogin && (
             <button
               onClick={() => { resetError(); setShowEmailLogin(true); }}
@@ -291,7 +289,7 @@ export function Login({ user }: { user: any }) {
             )}
           </AnimatePresence>
 
-          {/* SIGNUP MODE */}
+
           {mode === 'signup' && (
             <motion.form
               initial={{ opacity: 0 }}
