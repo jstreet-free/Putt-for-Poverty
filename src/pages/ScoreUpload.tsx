@@ -43,7 +43,7 @@ export function ScoreUpload({ user, participant }: { user: any, participant: any
     <div className="max-w-2xl mx-auto px-4 py-12 space-y-8">
       <div className="text-center space-y-4">
         <h1 className="text-5xl font-black text-slate-900 tracking-tight">SCORE <span className="text-emerald-600">INPUT</span></h1>
-        <p className="text-slate-500 font-medium">Uploading your round for June 21-22.</p>
+        <p className="text-slate-500 font-medium">Uploading your round for September 2-3.</p>
       </div>
 
       <AnimatePresence mode="wait">
@@ -86,7 +86,7 @@ export function ScoreUpload({ user, participant }: { user: any, participant: any
                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 flex items-start gap-4">
                   <Info className="text-slate-400 shrink-0 mt-1" size={20} />
                   <p className="text-sm font-medium text-slate-500 leading-relaxed">
-                    By submitting, you confirm this score was played on <span className="text-slate-900 font-bold">June 21st or 22nd</span> and adheres to the official rules and your registered handicap.
+                    By submitting, you confirm this score was played on <span className="text-slate-900 font-bold">September 2nd or 3rd</span> and adheres to the official rules and your registered handicap.
                   </p>
                </div>
 

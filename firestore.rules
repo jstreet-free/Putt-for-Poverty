@@ -44,7 +44,7 @@ service cloud.firestore {
       allow update: if (isOwner(userId) && 
                      isValidParticipant(incoming()) && (
                        // Action: Update profile/location
-                       (incoming().diff(existing()).affectedKeys().hasOnly(['location', 'updatedAt', 'name', 'golfClub', 'course', 'handicap'])) ||
+                       (incoming().diff(existing()).affectedKeys().hasOnly(['location', 'currentLocation', 'updatedAt', 'name', 'golfClub', 'course', 'handicap'])) ||
                        // Action: Score update (consuming a round is handled by server or strict client logic)
                        (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']))
                      )) || isAdmin();

@@ -59,7 +59,7 @@ export function Leaderboard({ user }: { user: FirebaseUser | null }) {
            Live Tournament Standings
         </div>
         <h1 className="text-5xl md:text-6xl font-black tracking-tight text-slate-900">LEADER<span className="text-emerald-600">BOARD</span></h1>
-        <p className="text-slate-500 font-medium text-lg">Scoring window: June 21st 00:01 - June 22nd 23:59</p>
+        <p className="text-slate-500 font-medium text-lg">Scoring window: September 2nd 00:01 - September 3rd 23:59</p>
       </div>
 
       <div className="bg-white rounded-[2rem] border-2 border-slate-100 shadow-xl overflow-hidden">
@@ -121,7 +121,7 @@ export function Leaderboard({ user }: { user: FirebaseUser | null }) {
               </div>
               <div className="space-y-1">
                 <p className="text-xl font-black text-slate-800">No scores yet!</p>
-                <p className="text-slate-500 font-medium">The scoreboard will spring to life on June 21st.</p>
+                <p className="text-slate-500 font-medium">The scoreboard will spring to life on September 2nd.</p>
               </div>
               <button
                 onClick={handleGetReadyToPlay}

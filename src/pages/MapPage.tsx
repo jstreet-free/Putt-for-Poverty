@@ -49,14 +49,18 @@ export function MapPage() {
   // On-the-fly client-side geocoding fallback for participants with labels but no coordinates
   useEffect(() => {
     // 1. Start with participants who already have complete lat/lng coordinates
-    const alreadyGeocoded = rawParticipants.filter(p => typeof p.location?.lat === 'number' && typeof p.location?.lng === 'number');
+    //    (either live GPS via currentLocation or registered city via location)
+    const alreadyGeocoded = rawParticipants.filter(p =>
+      (typeof p.currentLocation?.lat === 'number' && typeof p.currentLocation?.lng === 'number') ||
+      (typeof p.location?.lat === 'number' && typeof p.location?.lng === 'number')
+    );
     setMappedParticipants(alreadyGeocoded);
 
     // 2. If the geocoding library is not ready or they are already on the map, don't do anything
     if (!geocodingLib || rawParticipants.length === 0) return;
 
     // 3. Find participants that have some city/location label but NO actual coordinates
-    const unGeocoded = rawParticipants.filter(p => p.location?.label && (typeof p.location?.lat !== 'number' || typeof p.location?.lng !== 'number'));
+    const unGeocoded = rawParticipants.filter(p => !p.currentLocation && p.location?.label && (typeof p.location?.lat !== 'number' || typeof p.location?.lng !== 'number'));
 
     if (unGeocoded.length === 0) return;
 
@@ -114,11 +118,22 @@ export function MapPage() {
     };
   }, [rawParticipants, geocodingLib]);
 
+  // Resolve a participant's map position: real-time GPS when available, else registered city
+  const resolvePosition = (p: Participant) => {
+    if (p.currentLocation && typeof p.currentLocation.lat === 'number' && typeof p.currentLocation.lng === 'number') {
+      return { ...p.currentLocation, isLive: true };
+    }
+    if (typeof p.location?.lat === 'number' && typeof p.location?.lng === 'number') {
+      return { ...p.location, isLive: false };
+    }
+    return null;
+  };
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto px-4 py-12">
        <div className="text-center space-y-2">
           <h1 className="text-5xl font-black text-slate-900 tracking-tight">GLOBAL <span className="text-emerald-600">REACH</span></h1>
-          <p className="text-slate-500 font-medium text-lg">See where our charitable golfers are playing from across the world.</p>
+          <p className="text-slate-500 font-medium text-lg">See where our charitable golfers are right now — live from across the world.</p>
        </div>
 
        {authError && (
@@ -162,6 +177,7 @@ export function MapPage() {
                 participants={mappedParticipants} 
                 selectedId={selectedId} 
                 setSelectedId={setSelectedId} 
+                resolvePosition={resolvePosition}
               />
             </Map>
           ) : (
@@ -182,7 +198,7 @@ export function MapPage() {
                 </h3>
                 <p className="text-slate-500 text-sm font-medium leading-relaxed">
                   {totalCount > 0 
-                    ? `We have ${totalCount} registered players! We are currently geocoding their locations on-the-fly to display on this map.`
+                    ? `We have ${totalCount} registered players! Live GPS pins appear as players open the app during the tournament.`
                     : 'Be the first to put yourself on the map! Register and update your profile location to see your pin here.'
                   }
                 </p>
@@ -228,35 +244,41 @@ export function MapPage() {
   );
 }
 
-function MapContent({ participants, selectedId, setSelectedId }: any) {
+function MapContent({ participants, selectedId, setSelectedId, resolvePosition }: any) {
   const map = useMap();
   
   if (!map) return null;
 
   return (
     <>
-      {participants.map((p: any) => (
-        <ParticipantMarker 
-          key={p.id} 
-          participant={p} 
-          isSelected={selectedId === p.id}
-          onSelect={() => setSelectedId(p.id)}
-          onClose={() => setSelectedId(null)}
-        />
-      ))}
+      {participants.map((p: any) => {
+        const pos = resolvePosition(p);
+        if (!pos) return null;
+        return (
+          <ParticipantMarker 
+            key={p.id} 
+            participant={p} 
+            position={pos}
+            isSelected={selectedId === p.id}
+            onSelect={() => setSelectedId(p.id)}
+            onClose={() => setSelectedId(null)}
+          />
+        );
+      })}
     </>
   );
 }
 
-function ParticipantMarker({ participant, isSelected, onSelect, onClose }: any) {
+function ParticipantMarker({ participant, position, isSelected, onSelect, onClose }: any) {
+  const isLive = !!position.isLive;
   return (
     <>
       <Marker
-        position={{ lat: participant.location.lat, lng: participant.location.lng }}
+        position={{ lat: position.lat, lng: position.lng }}
         onClick={onSelect}
       />
       {isSelected && (
-        <InfoWindow position={{ lat: participant.location.lat, lng: participant.location.lng }} onCloseClick={onClose} minWidth={200}>
+        <InfoWindow position={{ lat: position.lat, lng: position.lng }} onCloseClick={onClose} minWidth={200}>
           <div className="p-2 space-y-3 font-sans">
             <div className="flex items-center gap-3">
                <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
@@ -264,9 +286,18 @@ function ParticipantMarker({ participant, isSelected, onSelect, onClose }: any) 
                </div>
                <div>
                   <div className="font-black text-slate-800">{participant.name}</div>
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{participant.location.label}</div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{position.label || participant.location?.label}</div>
                </div>
             </div>
+            {isLive && <>
+              <div className="flex items-center gap-1 text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 uppercase tracking-widest w-fit">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live GPS
+              </div>
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                Updated {formatLastUpdated(position.updatedAt)}
+              </div>
+            </>}
             <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
                <div className="flex items-center gap-2 text-xs font-bold text-slate-600 uppercase">
                   <Flag size={12} />
@@ -285,4 +316,14 @@ function ParticipantMarker({ participant, isSelected, onSelect, onClose }: any) 
       )}
     </>
   );
+}
+
+function formatLastUpdated(updatedAt: string): string {
+  if (!updatedAt) return 'just now';
+  const diff = Date.now() - new Date(updatedAt).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours} hr ago`;
 }

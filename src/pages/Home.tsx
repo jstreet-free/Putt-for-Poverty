@@ -38,7 +38,7 @@ export function Home({ participant }: { participant: any }) {
           >
             <div className="inline-flex items-center gap-2 bg-emerald-500/20 backdrop-blur-md border border-emerald-400/30 px-4 py-2 rounded-full text-emerald-300 font-bold text-sm tracking-widest uppercase">
               <Calendar size={16} />
-              June 21st - 22nd, 2026
+              September 2nd - 3rd, 2026
             </div>
             <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-[0.9]">
               PUTT FOR <br />

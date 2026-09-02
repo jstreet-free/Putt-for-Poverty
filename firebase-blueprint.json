@@ -22,6 +22,16 @@
             "label": { "type": "string" }
           }
         },
+        "currentLocation": {
+          "type": "object",
+          "description": "Real-time GPS position during the tournament window.",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" },
+            "label": { "type": "string" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        },
         "score": { "type": "number" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

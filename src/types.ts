@@ -15,6 +15,12 @@ export interface Participant {
     lng: number;
     label: string;
   };
+  currentLocation?: {
+    lat: number;
+    lng: number;
+    label: string;
+    updatedAt: string;
+  };
   updatedAt: string;
 }
 
