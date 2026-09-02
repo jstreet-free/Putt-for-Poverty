@@ -3,8 +3,6 @@ import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
 
-const TOURNAMENT_START = new Date('2026-09-02T00:00:00Z').getTime();
-const TOURNAMENT_END = new Date('2026-09-04T00:00:00Z').getTime();
 const MIN_UPDATE_INTERVAL_MS = 60_000;
 const MIN_MOVEMENT_METERS = 100;
 
@@ -33,14 +31,6 @@ export function useRealtimeLocation(user: User | null) {
 
   useEffect(() => {
     if (!user) return;
-
-    const now = Date.now();
-    const isTournamentWindow = now >= TOURNAMENT_START && now <= TOURNAMENT_END;
-
-    if (!isTournamentWindow) {
-      console.log('Real-time location tracking is only active during the tournament window.');
-      return;
-    }
 
     if (!('geolocation' in navigator)) {
       console.warn('Geolocation API not available in this browser.');
