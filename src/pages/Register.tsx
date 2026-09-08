@@ -7,7 +7,6 @@ import { loadStripe } from '@stripe/stripe-js';
 import { UserCircle, MapPin, Trophy, CreditCard, CheckCircle, Flag, Loader2, XCircle, ShieldCheck, Upload, FileCheck, ExternalLink } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { useMapsLibrary } from '@vis.gl/react-google-maps';
 import { PlaceAutocomplete } from '../components/PlaceAutocomplete';
 
 const stripePromise = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY 
@@ -102,8 +101,6 @@ export function Register({ user, participant }: { user: any, participant: any })
     }
   }, [participant]);
 
-  const geocodingLib = useMapsLibrary('geocoding');
-
   const handlePlaceSelect = (place: { lat: number; lng: number; label: string } | null) => {
     if (place) {
       setCoords({ lat: place.lat, lng: place.lng });
@@ -115,11 +112,11 @@ export function Register({ user, participant }: { user: any, participant: any })
   };
 
   const geocodeFallback = async () => {
-    if (!geocodingLib || !formData.locationLabel || coords) {
-      console.log('Skipping geocode fallback:', { lib: !!geocodingLib, label: !!formData.locationLabel, hasCoords: !!coords });
+    if (!formData.locationLabel || coords) {
+      console.log('Skipping geocode fallback:', { label: !!formData.locationLabel, hasCoords: !!coords });
       return;
     }
-    
+
     setGeocodingStatus('searching');
     console.log('Starting geocode fallback for:', formData.locationLabel);
 
@@ -129,18 +126,14 @@ export function Register({ user, participant }: { user: any, participant: any })
     }, 8000);
 
     try {
-      const geocoder = new geocodingLib.Geocoder();
-      const response = await new Promise<google.maps.GeocoderResponse>((resolve, reject) => {
-        geocoder.geocode({ address: formData.locationLabel }, (results, status) => {
-          if (status === 'OK' && results) resolve({ results });
-          else reject(new Error(status));
-        });
-      });
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(formData.locationLabel)}`
+      );
+      const data = await res.json();
       clearTimeout(timeoutId);
-      if (response.results && response.results[0]) {
-        const result = response.results[0];
-        setCoords({ lat: result.geometry.location.lat(), lng: result.geometry.location.lng() });
-        setFormData(prev => ({ ...prev, locationLabel: result.formatted_address }));
+      if (data && data[0]) {
+        setCoords({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) });
+        setFormData(prev => ({ ...prev, locationLabel: data[0].display_name }));
         setGeocodingStatus('found');
       } else {
         setGeocodingStatus('error');
@@ -387,15 +380,13 @@ export function Register({ user, participant }: { user: any, participant: any })
                         COULD NOT VERIFY THIS ADDRESS
                       </div>
                       <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs font-semibold text-slate-600 leading-relaxed max-w-lg">
-                        <div className="font-extrabold text-rose-700 uppercase tracking-wider text-[9px] mb-1 font-mono">ApiTargetBlockedMapError / Inactive APIs?</div>
-                        <p className="mb-2 text-[11px]">If verification remains unresponsive, circles indefinitely, or errors out, please verify that these APIs are fully enabled on your API key in the Google Cloud Console:</p>
-                        <ul className="list-disc pl-4 space-y-0.5 text-slate-500 text-[11px]">
-                          <li><span className="font-bold">Maps JavaScript API</span> (Required to render interactive maps)</li>
-                          <li><span className="font-bold">Geocoding API</span> (Required to translate typed addresses into map coordinates)</li>
-                          <li><span className="font-bold">Places API</span> or <span className="font-bold">Places API (New)</span> (Required for search suggestions)</li>
-                        </ul>
-                        <p className="mt-2 text-[10px] text-slate-400">
-                          To activate them: Go to the <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener noreferrer" className="text-emerald-600 hover:underline font-bold">Google Cloud APIs Library</a>, select your project, and search/enable each API.
+                        <p className="mb-2 text-[11px]">
+                          We couldn't match that to a place. Try being a bit more specific — for example, add
+                          the country name (e.g. "Birmingham, UK" instead of just "Birmingham").
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          If this keeps happening, you can still save your profile — your pin just won't appear
+                          on the global map until the location is verified.
                         </p>
                       </div>
                     </div>

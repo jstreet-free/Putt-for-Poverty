@@ -12,7 +12,8 @@ service cloud.firestore {
     function isAdmin() { 
       return isSignedIn() && 
              (request.auth.token.email == 'jstreet@freeatlast.st' || 
-              get(/databases/$(database)/documents/participants/$(request.auth.uid)).data.role == 'admin'); 
+              get(/databases/$(database)/documents/participants/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'); 
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
@@ -34,12 +35,13 @@ service cloud.firestore {
       allow get: if isSignedIn(); 
       allow list: if true; 
       
-      allow create: if isOwner(userId) && 
+      allow create: if (isOwner(userId) && 
                      isValidId(userId) &&
                      isValidParticipant(incoming()) &&
                      incoming().get('paidRounds', 0) == 0 &&
                      incoming().get('usedRounds', 0) == 0 &&
-                     incoming().get('role', 'user') == 'user';
+                     incoming().get('role', 'user') == 'user') ||
+                     isAdmin();
       
       allow update: if (isOwner(userId) && 
                      isValidParticipant(incoming()) && (

@@ -15,10 +15,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Login } from './pages/Login';
 import { AdminUsers } from './pages/AdminUsers';
 
-import { APIProvider } from '@vis.gl/react-google-maps';
 import { useRealtimeLocation } from './hooks/useRealtimeLocation';
-
-const GOOGLE_MAPS_API_KEY = (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY || (process as any).env?.GOOGLE_MAPS_PLATFORM_KEY || '';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -104,9 +101,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <APIProvider apiKey={GOOGLE_MAPS_API_KEY} version="weekly" libraries={['places', 'geocoding']}>
-        {content}
-      </APIProvider>
+      {content}
     </BrowserRouter>
   );
 }
