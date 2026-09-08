@@ -3,11 +3,12 @@ import { db } from '../lib/firebase';
 import {
   collection, query, orderBy, limit,
   startAfter, getDocs, documentId,
+  doc, getDoc, setDoc,
   QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import {
   Search, Users, X, Mail, MapPin, Trophy, FileCheck,
-  FileX, ExternalLink, Loader2, ChevronDown, Calendar,
+  FileX, ExternalLink, Loader2, ChevronDown, Calendar, UserPlus, CheckCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -28,6 +29,7 @@ interface AdminParticipant {
   membershipProofFileName?: string;
   paidRounds?: number;
   usedRounds?: number;
+  isParticipant?: boolean;
   [key: string]: any;
 }
 
@@ -40,6 +42,7 @@ export function AdminUsers() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<AdminParticipant | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [makingParticipant, setMakingParticipant] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
 
   const runQuery = async (opts: { cursor?: QueryDocumentSnapshot<DocumentData> | null }) => {
     const base = collection(db, 'users');
@@ -52,11 +55,24 @@ export function AdminUsers() {
     return { docs, lastVisible: snap.docs[snap.docs.length - 1] || null, count: snap.docs.length };
   };
 
+  const enrichWithParticipantStatus = async (docs: AdminParticipant[]): Promise<AdminParticipant[]> => {
+    await Promise.all(docs.map(async (u) => {
+      try {
+        const snap = await getDoc(doc(db, 'participants', u.id));
+        u.isParticipant = snap.exists();
+      } catch {
+        u.isParticipant = false;
+      }
+    }));
+    return docs;
+  };
+
   const loadFirstPage = async () => {
     setLoading(true);
     setError(null);
     try {
       const { docs, lastVisible, count } = await runQuery({});
+      await enrichWithParticipantStatus(docs);
       setUsers(docs);
       setLastDoc(lastVisible);
       setHasMore(count === PAGE_SIZE);
@@ -73,6 +89,7 @@ export function AdminUsers() {
     setLoadingMore(true);
     try {
       const { docs, lastVisible, count } = await runQuery({ cursor: lastDoc });
+      await enrichWithParticipantStatus(docs);
       setUsers(prev => [...prev, ...docs]);
       setLastDoc(lastVisible);
       setHasMore(count === PAGE_SIZE);
@@ -90,6 +107,39 @@ export function AdminUsers() {
 
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
+  };
+
+  const handleMakeParticipant = async (u: AdminParticipant) => {
+    setMakingParticipant(prev => ({ ...prev, [u.id]: 'loading' }));
+    try {
+      const partRef = doc(db, 'participants', u.id);
+      await setDoc(partRef, {
+        userId: u.id,
+        name: u.name || '',
+        email: u.email || '',
+        emailLower: u.emailLower || u.email?.toLowerCase() || '',
+        golfClub: u.golfClub || '',
+        course: u.course || '',
+        handicap: u.handicap ?? 0,
+        location: u.location ? { label: u.location.label || '', lat: (u.location as any)?.lat ?? 0, lng: (u.location as any)?.lng ?? 0 } : { label: '' },
+        role: 'user',
+        paidRounds: 0,
+        usedRounds: 0,
+        membershipProofUrl: u.membershipProofUrl || '',
+        membershipProofFileName: u.membershipProofFileName || '',
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, isParticipant: true } : x));
+      if (selectedUser?.id === u.id) {
+        setSelectedUser(prev => prev ? { ...prev, isParticipant: true } : prev);
+      }
+      setMakingParticipant(prev => ({ ...prev, [u.id]: 'success' }));
+      setTimeout(() => setMakingParticipant(prev => ({ ...prev, [u.id]: 'idle' })), 2000);
+    } catch (err) {
+      console.error(err);
+      setMakingParticipant(prev => ({ ...prev, [u.id]: 'error' }));
+    }
   };
 
   const filteredUsers = searchTerm.trim()
@@ -174,6 +224,9 @@ export function AdminUsers() {
                     <span className="text-emerald-600" title="Membership proof uploaded">
                       <FileCheck size={18} />
                     </span>
+                  )}
+                  {u.isParticipant && (
+                    <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-1 rounded-lg uppercase">Participant</span>
                   )}
                   {u.role === 'admin' && (
                     <span className="text-[10px] font-black bg-blue-100 text-blue-700 px-2 py-1 rounded-lg uppercase">Admin</span>
@@ -296,6 +349,36 @@ export function AdminUsers() {
                     <FileX size={18} />
                     No membership proof uploaded
                   </div>
+                )}
+              </div>
+
+              <div className="border-t border-slate-100 pt-6">
+                {selectedUser.isParticipant ? (
+                  <div className="flex items-center justify-center gap-2 bg-emerald-50 border-2 border-emerald-200 text-emerald-700 px-4 py-4 rounded-2xl font-black text-sm">
+                    <CheckCircle size={18} />
+                    PARTICIPANT
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleMakeParticipant(selectedUser)}
+                    disabled={makingParticipant[selectedUser.id] === 'loading'}
+                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white p-4 rounded-2xl font-black text-sm hover:bg-emerald-700 transition-colors disabled:opacity-60"
+                  >
+                    {makingParticipant[selectedUser.id] === 'loading' ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : makingParticipant[selectedUser.id] === 'success' ? (
+                      <CheckCircle size={18} />
+                    ) : (
+                      <UserPlus size={18} />
+                    )}
+                    {makingParticipant[selectedUser.id] === 'loading'
+                      ? 'MAKING PARTICIPANT...'
+                      : makingParticipant[selectedUser.id] === 'success'
+                        ? 'MADE PARTICIPANT!'
+                        : makingParticipant[selectedUser.id] === 'error'
+                          ? 'FAILED - TRY AGAIN'
+                          : 'MAKE PARTICIPANT'}
+                  </button>
                 )}
               </div>
             </motion.div>
