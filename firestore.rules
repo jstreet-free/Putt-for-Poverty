@@ -1,60 +1,78 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
+    // Default: admins can read anything (current or future collections); everything else denied unless overridden below
     match /{document=**} {
-      allow read, write: if false;
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // --- Helpers ---
     function isSignedIn() { return request.auth != null; }
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
-    function isAdmin() { 
-      return isSignedIn() && 
-             (request.auth.token.email == 'jstreet@freeatlast.st' || 
-              get(/databases/$(database)/documents/participants/$(request.auth.uid)).data.role == 'admin' ||
-              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'); 
+    function isAdmin() {
+      return isSignedIn() &&
+             (request.auth.token.email == 'jstreet@freeatlast.st' ||
+              (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+              (exists(/databases/$(database)/documents/participants/$(request.auth.uid)) &&
+               get(/databases/$(database)/documents/participants/$(request.auth.uid)).data.role == 'admin'));
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
-    function isValidId(id) { 
-      return id is string && id.size() > 0 && id.size() <= 256; 
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 256;
     }
-
     function isValidParticipant(data) {
       return data.keys().hasAll(['userId', 'name', 'golfClub', 'handicap']) &&
-             data.userId == request.auth.uid &&
+             data.userId is string &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.golfClub is string && data.golfClub.size() > 0 && data.golfClub.size() < 200 &&
              data.handicap is number;
     }
 
     // --- Collections ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId);
+      // Owners can edit their own profile, but cannot self-promote by
+      // writing role/status directly — only admins can change those.
+      allow update: if isAdmin() ||
+                     (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status']));
+      match /private/info {
+        allow get: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId) &&
+                               incoming().email is string &&
+                               incoming().email.size() < 256;
+      }
+    }
 
     match /participants/{userId} {
-      allow get: if isSignedIn(); 
-      allow list: if true; 
-      
-      allow create: if (isOwner(userId) && 
+      allow get: if isSignedIn();
+      allow list: if true;
+
+      allow create: if isAdmin() ||
+                     (isOwner(userId) &&
                      isValidId(userId) &&
                      isValidParticipant(incoming()) &&
+                     incoming().userId == userId &&
                      incoming().get('paidRounds', 0) == 0 &&
                      incoming().get('usedRounds', 0) == 0 &&
-                     incoming().get('role', 'user') == 'user') ||
-                     isAdmin();
-      
-      allow update: if (isOwner(userId) && 
+                     incoming().get('role', 'user') == 'user');
+
+      allow update: if isAdmin() || (isOwner(userId) &&
                      isValidParticipant(incoming()) && (
-                       // Action: Update profile/location
                        (incoming().diff(existing()).affectedKeys().hasOnly(['location', 'currentLocation', 'updatedAt', 'name', 'golfClub', 'course', 'handicap'])) ||
-                       // Action: Score update (consuming a round is handled by server or strict client logic)
                        (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']))
-                     )) || isAdmin();
+                     ));
+
+      allow delete: if isAdmin();
 
       match /private/info {
         allow get: if isOwner(userId) || isAdmin();
-        allow create, update: if isOwner(userId) && 
-                               incoming().email is string && 
+        allow create, update: if isOwner(userId) &&
+                               incoming().email is string &&
                                incoming().email.size() < 256;
       }
     }
@@ -66,13 +84,46 @@ service cloud.firestore {
 
     match /scores/{scoreId} {
       allow read: if true;
-      allow create: if isSignedIn() && 
+      allow create: if isSignedIn() &&
                     isValidId(scoreId) &&
                     incoming().participantId == request.auth.uid &&
                     incoming().points is number &&
                     incoming().points >= 0 &&
                     incoming().points <= 100;
       allow update, delete: if isAdmin();
+    }
+
+    // --- Analytics (Daily App Usage tab) ---
+    // Write is open to everyone (including logged-out visitors) since
+    // that's who's being counted; read stays admin-only via the default rule.
+    match /dailyAppStats/{day} {
+      allow write: if incoming().date is string &&
+                   incoming().totalVisits is number;
+    }
+
+    // --- Content & communication (Content & Newsletter tab) ---
+    match /announcements/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /newsletter_subscribers/{id} {
+      allow write: if isAdmin();
+    }
+
+    match /newsletters/{id} {
+      allow write: if isAdmin();
+    }
+
+    // --- Community needs / requests broadcast (Community Needs tab) ---
+    match /needs/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // --- Warnings / moderation log (Warnings & Alerts tab) ---
+    match /warnings/{id} {
+      allow write: if isAdmin();
     }
   }
 }

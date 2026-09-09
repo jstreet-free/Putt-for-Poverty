@@ -16,6 +16,7 @@ import { Login } from './pages/Login';
 import { AdminUsers } from './pages/AdminUsers';
 
 import { useRealtimeLocation } from './hooks/useRealtimeLocation';
+import { logVisit } from './lib/analyticsService';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -25,6 +26,15 @@ export default function App() {
 
   useRealtimeLocation(user);
 
+  // Log a single visit per session/role for the admin analytics dashboard.
+  // Uses window.location directly since this runs before BrowserRouter mounts.
+  useEffect(() => {
+    if (loading) return;
+    const role: 'user' | 'admin' | 'public' = !user ? 'public' : userDoc?.role === 'admin' ? 'admin' : 'user';
+    const page = window.location.pathname.replace(/^\//, '') || 'home';
+    logVisit(role, page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user, userDoc?.role]);
 
   useEffect(() => {
   let unsubUser: (() => void) | null = null;
