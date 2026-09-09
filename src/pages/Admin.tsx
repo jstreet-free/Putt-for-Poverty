@@ -2,11 +2,31 @@ import { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { Participant, Sponsor } from '../types';
-import { Users, Trophy, MapPin, Plus, Trash2, Edit2, ShieldCheck, CreditCard, Layout, ArrowRight } from 'lucide-react';
+import {
+  Users, Trophy, MapPin, Plus, Trash2, Edit2, ShieldCheck, CreditCard, Layout, ArrowRight,
+  Activity, Megaphone, AlertTriangle, LayoutGrid,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
+import { AdminAppUsage } from '../components/admin/AdminAppUsage';
+import { AdminContent } from '../components/admin/AdminContent';
+import { AdminNeeds } from '../components/admin/AdminNeeds';
+import { AdminScores } from '../components/admin/AdminScores';
+import { AdminWarnings } from '../components/admin/AdminWarnings';
 
-export function Admin({ user, participant }: { user: any, participant: any }) {
+type AdminTab = 'overview' | 'usage' | 'content' | 'needs' | 'scores' | 'warnings';
+
+const TABS: { id: AdminTab; label: string; icon: any }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutGrid },
+  { id: 'usage', label: 'Daily App Usage', icon: Activity },
+  { id: 'scores', label: 'Score Moderation', icon: Trophy },
+  { id: 'content', label: 'Content & Newsletter', icon: Megaphone },
+  { id: 'needs', label: 'Community Needs', icon: Megaphone },
+  { id: 'warnings', label: 'Warnings & Alerts', icon: AlertTriangle },
+];
+
+export function Admin({ user, participant }: { user: any; participant: any }) {
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,7 +50,6 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
     const newRole = p.role === 'admin' ? 'user' : 'admin';
     if (!confirm(`Make ${p.name} ${newRole === 'admin' ? 'an admin' : 'a regular user'}?`)) return;
     try {
-      // role now lives on the `users` collection, not `participants`
       await setDoc(doc(db, 'users', p.id), { role: newRole }, { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${p.id}`);
@@ -66,7 +85,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
   if (loading) return <div className="p-12 text-center text-slate-500 font-bold">Initialising Admin Control Hub...</div>;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-12 space-y-12">
+    <div className="max-w-7xl mx-auto px-4 py-12 space-y-10">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
@@ -99,6 +118,29 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
         </div>
       </div>
 
+      {/* Tab bar */}
+      <div className="flex flex-wrap gap-2 bg-white p-2 rounded-2xl border border-slate-100 shadow-sm">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-tight transition-all ${
+              activeTab === tab.id ? 'bg-blue-600 text-white shadow-md scale-105' : 'text-slate-500 hover:bg-slate-100'
+            }`}
+          >
+            <tab.icon size={16} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'usage' && <AdminAppUsage />}
+      {activeTab === 'content' && <AdminContent />}
+      {activeTab === 'needs' && <AdminNeeds />}
+      {activeTab === 'scores' && <AdminScores />}
+      {activeTab === 'warnings' && <AdminWarnings />}
+
+      {activeTab === 'overview' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
         {/* Participants Table */}
         <div className="lg:col-span-2 space-y-6">
@@ -167,7 +209,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
               <ShieldCheck size={24} className="text-emerald-600" />
               Sponsors
             </h2>
-            <button 
+            <button
               onClick={() => { setEditingSponsor({ order: sponsors.length + 1 }); setShowSponsorModal(true); }}
               className="bg-emerald-600 text-white p-2 rounded-xl hover:bg-emerald-700 transition-colors"
             >
@@ -187,13 +229,13 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                     <div className="text-xs text-slate-400 font-medium truncate">{s.tagline}</div>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
+                    <button
                       onClick={() => { setEditingSponsor(s); setShowSponsorModal(true); }}
                       className="text-slate-400 hover:text-blue-500 p-1"
                     >
                       <Edit2 size={16} />
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleDeleteSponsor(s.id)}
                       className="text-slate-400 hover:text-rose-500 p-1"
                     >
@@ -212,17 +254,18 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
           </div>
         </div>
       </div>
+      )}
 
       {/* Sponsor Modal */}
       <AnimatePresence>
         {showSponsorModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setShowSponsorModal(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" 
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
             />
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
               className="relative w-full max-w-lg bg-white rounded-[2.5rem] p-8 shadow-2xl space-y-8"
             >
@@ -233,7 +276,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                 <div className="space-y-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Sponsor Name</label>
-                    <input 
+                    <input
                       required
                       value={editingSponsor?.name || ''}
                       onChange={e => setEditingSponsor({...editingSponsor, name: e.target.value})}
@@ -242,7 +285,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Logo URL</label>
-                    <input 
+                    <input
                       required
                       value={editingSponsor?.logo || ''}
                       onChange={e => setEditingSponsor({...editingSponsor, logo: e.target.value})}
@@ -252,7 +295,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Tagline</label>
-                    <input 
+                    <input
                       value={editingSponsor?.tagline || ''}
                       onChange={e => setEditingSponsor({...editingSponsor, tagline: e.target.value})}
                       className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-bold text-slate-900 focus:border-blue-500 outline-none transition-colors"
@@ -261,7 +304,7 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Display Order</label>
-                      <input 
+                      <input
                         type="number"
                         value={editingSponsor?.order || ''}
                         onChange={e => setEditingSponsor({...editingSponsor, order: parseInt(e.target.value)})}
@@ -271,14 +314,14 @@ export function Admin({ user, participant }: { user: any, participant: any }) {
                   </div>
                 </div>
                 <div className="flex gap-4">
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     onClick={() => setShowSponsorModal(false)}
                     className="flex-1 bg-slate-100 text-slate-600 p-4 rounded-2xl font-black uppercase text-sm hover:bg-slate-200 transition-colors"
                   >
                     Cancel
                   </button>
-                  <button 
+                  <button
                     type="submit"
                     className="flex-1 bg-blue-600 text-white p-4 rounded-2xl font-black uppercase text-sm hover:bg-blue-700 transition-colors shadow-lg"
                   >

@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { db } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
   collection, query, orderBy, limit,
   startAfter, getDocs, documentId,
-  doc, getDoc, setDoc,
+  doc, getDoc, setDoc, updateDoc, deleteDoc,
   QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import {
   Search, Users, X, Mail, MapPin, Trophy, FileCheck,
   FileX, ExternalLink, Loader2, ChevronDown, Calendar, UserPlus, CheckCircle,
+  Pencil, Save, Ban, ShieldCheck, ShieldOff, Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -43,6 +44,10 @@ export function AdminUsers() {
   const [selectedUser, setSelectedUser] = useState<AdminParticipant | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [makingParticipant, setMakingParticipant] = useState<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({});
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState<Partial<AdminParticipant>>({});
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
 
   const runQuery = async (opts: { cursor?: QueryDocumentSnapshot<DocumentData> | null }) => {
     const base = collection(db, 'users');
@@ -142,6 +147,94 @@ export function AdminUsers() {
     }
   };
 
+  const startEdit = (u: AdminParticipant) => {
+    setEditForm({
+      name: u.name || '',
+      email: u.email || '',
+      golfClub: u.golfClub || '',
+      course: u.course || '',
+      handicap: u.handicap ?? 0,
+    });
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedUser) return;
+    setSavingEdit(true);
+    try {
+      const updates = {
+        name: editForm.name,
+        email: editForm.email,
+        emailLower: (editForm.email || '').toLowerCase(),
+        golfClub: editForm.golfClub,
+        course: editForm.course,
+        handicap: Number(editForm.handicap) || 0,
+        updatedAt: new Date().toISOString(),
+      };
+      await updateDoc(doc(db, 'users', selectedUser.id), updates);
+      if (selectedUser.isParticipant) {
+        await updateDoc(doc(db, 'participants', selectedUser.id), updates);
+      }
+      const merged = { ...selectedUser, ...updates };
+      setUsers((prev) => prev.map((x) => (x.id === selectedUser.id ? merged : x)));
+      setSelectedUser(merged);
+      setIsEditing(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${selectedUser.id}`);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleToggleRole = async (u: AdminParticipant) => {
+    const newRole = u.role === 'admin' ? 'user' : 'admin';
+    if (!confirm(`Make ${u.name || u.email} ${newRole === 'admin' ? 'an admin' : 'a regular user'}?`)) return;
+    setRowBusy((prev) => ({ ...prev, [u.id]: true }));
+    try {
+      await setDoc(doc(db, 'users', u.id), { role: newRole }, { merge: true });
+      const merged = { ...u, role: newRole };
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? merged : x)));
+      if (selectedUser?.id === u.id) setSelectedUser(merged);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${u.id}`);
+    } finally {
+      setRowBusy((prev) => ({ ...prev, [u.id]: false }));
+    }
+  };
+
+  const handleToggleSuspend = async (u: AdminParticipant) => {
+    const newStatus = u.status === 'suspended' ? 'active' : 'suspended';
+    if (!confirm(`${newStatus === 'suspended' ? 'Suspend' : 'Reactivate'} ${u.name || u.email}?`)) return;
+    setRowBusy((prev) => ({ ...prev, [u.id]: true }));
+    try {
+      await setDoc(doc(db, 'users', u.id), { status: newStatus }, { merge: true });
+      const merged = { ...u, status: newStatus };
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? merged : x)));
+      if (selectedUser?.id === u.id) setSelectedUser(merged);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${u.id}`);
+    } finally {
+      setRowBusy((prev) => ({ ...prev, [u.id]: false }));
+    }
+  };
+
+  const handleDeleteUser = async (u: AdminParticipant) => {
+    if (!confirm(`Permanently delete ${u.name || u.email}? This removes their user record and participant entry.`)) return;
+    setRowBusy((prev) => ({ ...prev, [u.id]: true }));
+    try {
+      await deleteDoc(doc(db, 'users', u.id));
+      if (u.isParticipant) {
+        await deleteDoc(doc(db, 'participants', u.id));
+      }
+      setUsers((prev) => prev.filter((x) => x.id !== u.id));
+      if (selectedUser?.id === u.id) setSelectedUser(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${u.id}`);
+    } finally {
+      setRowBusy((prev) => ({ ...prev, [u.id]: false }));
+    }
+  };
+
   const filteredUsers = searchTerm.trim()
     ? users.filter(u => {
         const term = searchTerm.trim().toLowerCase();
@@ -231,6 +324,9 @@ export function AdminUsers() {
                   {u.role === 'admin' && (
                     <span className="text-[10px] font-black bg-blue-100 text-blue-700 px-2 py-1 rounded-lg uppercase">Admin</span>
                   )}
+                  {u.status === 'suspended' && (
+                    <span className="text-[10px] font-black bg-rose-100 text-rose-700 px-2 py-1 rounded-lg uppercase">Suspended</span>
+                  )}
                   <span className="text-xs font-bold text-slate-400">{formatDate(u.createdAt)}</span>
                 </div>
               </button>
@@ -270,18 +366,96 @@ export function AdminUsers() {
                     {selectedUser.name?.[0] || selectedUser.email?.[0] || '?'}
                   </div>
                   <div>
-                    <h3 className="text-2xl font-black text-slate-900 tracking-tight">{selectedUser.name || 'Unnamed'}</h3>
+                    <h3 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      {selectedUser.name || 'Unnamed'}
+                      {selectedUser.status === 'suspended' && (
+                        <span className="text-[9px] font-black uppercase tracking-widest bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">
+                          Suspended
+                        </span>
+                      )}
+                    </h3>
                     <p className="text-sm text-slate-400 font-medium flex items-center gap-1">
                       <Mail size={12} />
                       {selectedUser.email || 'No email on file'}
                     </p>
                   </div>
                 </div>
-                <button onClick={() => setSelectedUser(null)} className="text-slate-300 hover:text-slate-600 transition-colors">
-                  <X size={24} />
+                <div className="flex items-center gap-2">
+                  {!isEditing && (
+                    <button onClick={() => startEdit(selectedUser)} className="text-slate-400 hover:text-blue-600 transition-colors">
+                      <Pencil size={20} />
+                    </button>
+                  )}
+                  <button onClick={() => { setSelectedUser(null); setIsEditing(false); }} className="text-slate-300 hover:text-slate-600 transition-colors">
+                    <X size={24} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Admin management actions */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => handleToggleRole(selectedUser)}
+                  disabled={rowBusy[selectedUser.id]}
+                  className={`flex items-center gap-1.5 text-xs font-black px-3 py-2 rounded-xl uppercase transition-colors disabled:opacity-50 ${
+                    selectedUser.role === 'admin' ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {selectedUser.role === 'admin' ? <ShieldOff size={14} /> : <ShieldCheck size={14} />}
+                  {selectedUser.role === 'admin' ? 'Revoke Admin' : 'Make Admin'}
+                </button>
+                <button
+                  onClick={() => handleToggleSuspend(selectedUser)}
+                  disabled={rowBusy[selectedUser.id]}
+                  className={`flex items-center gap-1.5 text-xs font-black px-3 py-2 rounded-xl uppercase transition-colors disabled:opacity-50 ${
+                    selectedUser.status === 'suspended' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                  }`}
+                >
+                  <Ban size={14} />
+                  {selectedUser.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                </button>
+                <button
+                  onClick={() => handleDeleteUser(selectedUser)}
+                  disabled={rowBusy[selectedUser.id]}
+                  className="flex items-center gap-1.5 text-xs font-black px-3 py-2 rounded-xl uppercase bg-rose-100 text-rose-700 hover:bg-rose-200 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  Delete
                 </button>
               </div>
 
+              {isEditing ? (
+                <div className="bg-slate-50 p-5 rounded-2xl border-2 border-slate-100 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <EditField label="Name" value={editForm.name || ''} onChange={(v) => setEditForm({ ...editForm, name: v })} />
+                    <EditField label="Email" value={editForm.email || ''} onChange={(v) => setEditForm({ ...editForm, email: v })} />
+                    <EditField label="Golf Club" value={editForm.golfClub || ''} onChange={(v) => setEditForm({ ...editForm, golfClub: v })} />
+                    <EditField label="Course" value={editForm.course || ''} onChange={(v) => setEditForm({ ...editForm, course: v })} />
+                    <EditField
+                      label="Handicap"
+                      value={String(editForm.handicap ?? '')}
+                      onChange={(v) => setEditForm({ ...editForm, handicap: parseFloat(v) || 0 })}
+                      type="number"
+                    />
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setIsEditing(false)}
+                      className="flex-1 bg-white border-2 border-slate-200 text-slate-600 p-3 rounded-xl font-black uppercase text-xs hover:bg-slate-100 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      disabled={savingEdit}
+                      className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white p-3 rounded-xl font-black uppercase text-xs hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    >
+                      {savingEdit ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                      Save Changes
+                    </button>
+                  </div>
+                </div>
+              ) : (
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-slate-50 p-4 rounded-2xl space-y-1">
                   <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
@@ -314,6 +488,7 @@ export function AdminUsers() {
                   <div className="font-bold text-slate-800">{selectedUser.usedRounds ?? 0}</div>
                 </div>
               </div>
+              )}
 
               <div className="space-y-2">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
@@ -385,6 +560,30 @@ export function AdminUsers() {
           </div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-white border-2 border-slate-100 rounded-xl p-3 font-bold text-slate-900 focus:border-blue-500 outline-none transition-colors"
+      />
     </div>
   );
 }
