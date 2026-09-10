@@ -5,6 +5,9 @@ import { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Sponsor } from '../types';
+import { PublicAnnouncements } from '../components/PublicAnnouncements';
+import { PublicNeeds } from '../components/PublicNeeds';
+import { NewsletterSignup } from '../components/NewsletterSignup';
 
 export function Home({ participant }: { participant: any }) {
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
@@ -135,6 +138,15 @@ export function Home({ participant }: { participant: any }) {
           </div>
         </div>
       </section>
+
+      {/* Community Needs */}
+      <PublicNeeds />
+
+      {/* Latest Updates (Content) */}
+      <PublicAnnouncements />
+
+      {/* Newsletter Signup */}
+      <NewsletterSignup />
 
       {/* Sponsors */}
       <section className="max-w-7xl mx-auto px-4 text-center space-y-12">

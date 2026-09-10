@@ -32,8 +32,17 @@ export async function logVisit(role: VisitRole = 'public', page: string = 'home'
       {
         date: key,
         totalVisits: increment(1),
-        [`roleBreakdown.${role}`]: increment(1),
-        [`pageViews.${safePage}`]: increment(1),
+        // Nested objects here (not dotted string keys) — setDoc's merge:true
+        // deep-merges nested maps correctly, but a dotted key like
+        // 'roleBreakdown.user' is NOT reliably treated as a nested path by
+        // set() the way it is by updateDoc(), which is why this data never
+        // actually landed before.
+        roleBreakdown: {
+          [role]: increment(1),
+        },
+        pageViews: {
+          [safePage]: increment(1),
+        },
         updatedAt: serverTimestamp(),
       },
       { merge: true }

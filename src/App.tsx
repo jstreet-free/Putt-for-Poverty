@@ -21,20 +21,25 @@ import { logVisit } from './lib/analyticsService';
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [userDoc, setUserDoc] = useState<DocumentData | null>(null);
+  const [userDocLoaded, setUserDocLoaded] = useState(false);
   const [participant, setParticipant] = useState<DocumentData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useRealtimeLocation(user);
 
   // Log a single visit per session/role for the admin analytics dashboard.
-  // Uses window.location directly since this runs before BrowserRouter mounts.
+  // Waits for the `users` doc listener to actually resolve (not just the
+  // participants listener) before logging, so a signed-in admin's role is
+  // known up front — otherwise this could log once as 'user' and again as
+  // 'admin' a moment later as userDoc catches up, double-counting the visit.
   useEffect(() => {
     if (loading) return;
+    if (user && !userDocLoaded) return;
     const role: 'user' | 'admin' | 'public' = !user ? 'public' : userDoc?.role === 'admin' ? 'admin' : 'user';
     const page = window.location.pathname.replace(/^\//, '') || 'home';
     logVisit(role, page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user, userDoc?.role]);
+  }, [loading, user, userDocLoaded, userDoc?.role]);
 
   useEffect(() => {
   let unsubUser: (() => void) | null = null;
@@ -48,6 +53,10 @@ export default function App() {
     if (u) {
       unsubUser = onSnapshot(doc(db, 'users', u.uid), (snap) => {
         setUserDoc(snap.exists() ? snap.data() : null);
+        setUserDocLoaded(true);
+      }, () => {
+        // Even on error, don't block visit logging forever
+        setUserDocLoaded(true);
       });
       unsubPart = onSnapshot(doc(db, 'participants', u.uid), (snap) => {
         setParticipant(snap.exists() ? snap.data() : null);
@@ -58,6 +67,7 @@ export default function App() {
       });
     } else {
       setUserDoc(null);
+      setUserDocLoaded(false);
       setParticipant(null);
       setLoading(false);
     }
