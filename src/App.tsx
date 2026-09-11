@@ -4,6 +4,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, DocumentData } from 'firebase/firestore';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
+import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
 import { Register } from './pages/Register';
 import { Leaderboard } from './pages/Leaderboard';
@@ -116,6 +117,7 @@ export default function App() {
           </Routes>
         </AnimatePresence>
       </main>
+      <Footer />
     </div>
   );
 

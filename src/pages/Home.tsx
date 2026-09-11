@@ -4,13 +4,25 @@ import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Sponsor } from '../types';
+import { Sponsor, EventSettings } from '../types';
 import { PublicAnnouncements } from '../components/PublicAnnouncements';
 import { PublicNeeds } from '../components/PublicNeeds';
 import { NewsletterSignup } from '../components/NewsletterSignup';
+import { subscribeToEventSettings, DEFAULT_EVENT_SETTINGS } from '../lib/eventSettingsService';
+
+// If the event's end date has passed and the admin hasn't set a future date
+// yet, show a generic "coming soon" badge instead of the stale old date.
+function resolveHeroDateLabel(settings: EventSettings): string {
+  if (settings.endDate) {
+    const hasEnded = new Date(settings.endDate).getTime() < Date.now();
+    if (hasEnded) return 'Next event is coming soon';
+  }
+  return settings.dateLabel;
+}
 
 export function Home({ participant }: { participant: any }) {
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
+  const [eventSettings, setEventSettings] = useState<EventSettings>(DEFAULT_EVENT_SETTINGS);
 
   useEffect(() => {
     const q = query(collection(db, 'sponsors'), orderBy('order', 'asc'));
@@ -19,6 +31,13 @@ export function Home({ participant }: { participant: any }) {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const unsub = subscribeToEventSettings(setEventSettings);
+    return () => unsub();
+  }, []);
+
+  const heroDateLabel = resolveHeroDateLabel(eventSettings);
 
   return (
     <div className="space-y-24 pb-24">
@@ -41,7 +60,7 @@ export function Home({ participant }: { participant: any }) {
           >
             <div className="inline-flex items-center gap-2 bg-emerald-500/20 backdrop-blur-md border border-emerald-400/30 px-4 py-2 rounded-full text-emerald-300 font-bold text-sm tracking-widest uppercase">
               <Calendar size={16} />
-              September 2nd - 3rd, 2026
+              {heroDateLabel}
             </div>
             <h1 className="text-6xl md:text-8xl font-black tracking-tighter leading-[0.9]">
               PUTT FOR <br />
@@ -180,7 +199,7 @@ export function Home({ participant }: { participant: any }) {
         )}
         
         <div className="pt-8">
-           <button className="text-emerald-600 font-bold hover:underline">Want to sponsor this event? Contact us.</button>
+           <a href="#contact" className="text-emerald-600 font-bold hover:underline">Want to sponsor this event? Contact us.</a>
         </div>
       </section>
 

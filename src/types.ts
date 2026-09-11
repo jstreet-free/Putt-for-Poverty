@@ -127,3 +127,11 @@ export interface AdminWarning {
   createdBy?: string;
   resolved?: boolean;
 }
+
+export interface EventSettings {
+  dateLabel: string; 
+  startDate?: string;
+  endDate?: string; 
+  updatedAt?: string;
+  updatedBy?: string;
+}
