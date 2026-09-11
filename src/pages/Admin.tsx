@@ -4,7 +4,7 @@ import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy } from '
 import { Participant, Sponsor } from '../types';
 import {
   Users, Trophy, MapPin, Plus, Trash2, Edit2, ShieldCheck, CreditCard, Layout, ArrowRight,
-  Activity, Megaphone, AlertTriangle, LayoutGrid,
+  Activity, Megaphone, AlertTriangle, LayoutGrid, Calendar,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
@@ -13,8 +13,9 @@ import { AdminContent } from '../components/admin/AdminContent';
 import { AdminNeeds } from '../components/admin/AdminNeeds';
 import { AdminScores } from '../components/admin/AdminScores';
 import { AdminWarnings } from '../components/admin/AdminWarnings';
+import { AdminEventSettings } from '../components/admin/AdminEventSettings';
 
-type AdminTab = 'overview' | 'usage' | 'content' | 'needs' | 'scores' | 'warnings';
+type AdminTab = 'overview' | 'usage' | 'content' | 'needs' | 'scores' | 'warnings' | 'event';
 
 const TABS: { id: AdminTab; label: string; icon: any }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutGrid },
@@ -23,6 +24,7 @@ const TABS: { id: AdminTab; label: string; icon: any }[] = [
   { id: 'content', label: 'Content & Newsletter', icon: Megaphone },
   { id: 'needs', label: 'Community Needs', icon: Megaphone },
   { id: 'warnings', label: 'Warnings & Alerts', icon: AlertTriangle },
+  { id: 'event', label: 'Event Settings', icon: Calendar },
 ];
 
 export function Admin({ user, participant }: { user: any; participant: any }) {
@@ -139,6 +141,7 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
       {activeTab === 'needs' && <AdminNeeds />}
       {activeTab === 'scores' && <AdminScores />}
       {activeTab === 'warnings' && <AdminWarnings />}
+      {activeTab === 'event' && <AdminEventSettings />}
 
       {activeTab === 'overview' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
