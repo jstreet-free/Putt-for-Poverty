@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
+import { verifyCaller } from './api/_lib/auth';
 
 dotenv.config();
 
@@ -35,9 +36,15 @@ async function startServer() {
       return res.status(500).json({ error: "Stripe not configured" });
     }
 
+    const caller = await verifyCaller(req);
+    if (!caller) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     try {
-      const { userId, userEmail } = req.body;
-      
+      const userId = caller.uid;
+      const userEmail = caller.email;
+
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         line_items: [
@@ -59,7 +66,7 @@ async function startServer() {
         metadata: {
           userId,
         },
-        customer_email: userEmail,
+        ...(userEmail ? { customer_email: userEmail } : {}),
       });
 
       res.json({ id: session.id });
@@ -70,32 +77,34 @@ async function startServer() {
 
   app.post("/api/verify-payment", async (req, res) => {
     if (!stripe) return res.status(500).json({ error: "Stripe not configured" });
-    
+
+    const caller = await verifyCaller(req);
+    if (!caller) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     const { sessionId } = req.body;
     try {
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       if (session.payment_status === 'paid') {
         const userId = session.metadata?.userId;
-        if (userId) {
-          const userRef = db.collection('participants').doc(userId);
-          const doc = await userRef.get();
-          
-          if (doc.exists) {
-            // Check if this session was already processed to avoid double counting
-            const processedSessions = doc.get('processedSessions') || [];
-            if (!processedSessions.includes(sessionId)) {
-              await userRef.update({
-                paidRounds: FieldValue.increment(1),
-                processedSessions: FieldValue.arrayUnion(sessionId),
-                updatedAt: new Date().toISOString()
-              });
-              
-              // Set admin if matching special email
-              const email = session.customer_details?.email || session.customer_email;
-              if (email === 'jstreet@freeatlast.st') {
-                await userRef.update({ role: 'admin' });
-              }
-            }
+
+        if (!userId || userId !== caller.uid) {
+          return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        const userRef = db.collection('participants').doc(userId);
+        const doc = await userRef.get();
+
+        if (doc.exists) {
+          // Check if this session was already processed to avoid double counting
+          const processedSessions = doc.get('processedSessions') || [];
+          if (!processedSessions.includes(sessionId)) {
+            await userRef.update({
+              paidRounds: FieldValue.increment(1),
+              processedSessions: FieldValue.arrayUnion(sessionId),
+              updatedAt: new Date().toISOString()
+            });
           }
         }
         res.json({ success: true });

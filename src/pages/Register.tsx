@@ -66,9 +66,13 @@ export function Register({ user, participant }: { user: any, participant: any })
       if (searchParams.get('success') === 'true' && sessionId && !isVerifying) {
         setIsVerifying(true);
         try {
+          const idToken = await user?.getIdToken();
           const res = await fetch('/api/verify-payment', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+            },
             body: JSON.stringify({ sessionId })
           });
           if (res.ok) {
@@ -170,13 +174,14 @@ export function Register({ user, participant }: { user: any, participant: any })
 
       await batch.commit();
 
+      const idToken = await user.getIdToken();
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          userEmail: user.email,
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({}),
       });
 
       const session = await response.json();

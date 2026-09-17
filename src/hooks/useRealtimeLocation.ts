@@ -13,6 +13,14 @@ interface GeoPoint {
   lng: number;
 }
 
+// The participants collection is publicly listable (it backs the public
+// "Global Reach" map), so live GPS coordinates are rounded to ~1.1km before
+// being written — enough to place a pin on a world map without broadcasting
+// a participant's exact real-time physical location to anyone on the internet.
+function roundForPublicDisplay(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 function haversineDistance(a: GeoPoint, b: GeoPoint): number {
   const R = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -55,8 +63,8 @@ export function useRealtimeLocation(user: User | null) {
           participantRef,
           {
             currentLocation: {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
+              lat: roundForPublicDisplay(position.coords.latitude),
+              lng: roundForPublicDisplay(position.coords.longitude),
               label: 'Live GPS',
               updatedAt: new Date().toISOString(),
             },
