@@ -1,23 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
 import type { User } from 'firebase/auth';
+import { Lobby } from '../types';
+import { getMyLobbies, isLobbyLive, writeLobbyLocation } from '../lib/lobbyService';
 
-const TOURNAMENT_START = new Date('2026-09-02T00:00:00Z').getTime();
-const TOURNAMENT_END = new Date('2026-09-04T00:00:00Z').getTime();
 const MIN_UPDATE_INTERVAL_MS = 60_000;
 const MIN_MOVEMENT_METERS = 100;
+const LOBBY_REFRESH_MS = 5 * 60_000;
 
 interface GeoPoint {
   lat: number;
   lng: number;
 }
 
-// The participants collection is publicly listable (it backs the public
-// "Global Reach" map), so live GPS coordinates are rounded to ~1.1km before
-// being written — enough to place a pin on a world map without broadcasting
-// a participant's exact real-time physical location to anyone on the internet.
-function roundForPublicDisplay(value: number): number {
+// Positions are rounded to ~1.1km before being shared with the rest of the
+// lobby — close enough to see who is out playing where, without broadcasting
+// anyone's exact real-time position.
+function roundForSharing(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
@@ -32,21 +30,51 @@ function haversineDistance(a: GeoPoint, b: GeoPoint): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+// Shares the signed-in player's position with every lobby of theirs whose
+// event is currently running. Outside an event window nothing is written —
+// the matching firestore.rules condition rejects it anyway.
 export function useRealtimeLocation(user: User | null) {
   const [tracking, setTracking] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [liveLobbies, setLiveLobbies] = useState<Lobby[]>([]);
   const lastWriteRef = useRef(0);
   const lastPositionRef = useRef<GeoPoint | null>(null);
-  const watchIdRef = useRef<number | null>(null);
+  const liveLobbiesRef = useRef<Lobby[]>([]);
+
+  liveLobbiesRef.current = liveLobbies;
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setLiveLobbies([]);
+      return;
+    }
 
-    const now = Date.now();
-    const isTournamentWindow = now >= TOURNAMENT_START && now <= TOURNAMENT_END;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const lobbies = await getMyLobbies(user.uid);
+        if (!active) return;
+        setLiveLobbies(lobbies.filter(l => isLobbyLive(l)));
+      } catch (error) {
+        console.warn('Could not load lobbies for location sharing:', error);
+      }
+    };
 
-    if (!isTournamentWindow) {
-      console.log('Real-time location tracking is only active during the tournament window.');
+    refresh();
+    const interval = setInterval(refresh, LOBBY_REFRESH_MS);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [user]);
+
+  // Keyed on the ids rather than the array so a refresh that finds the same
+  // lobbies doesn't tear down and restart the GPS watcher.
+  const liveLobbyIds = liveLobbies.map(l => l.id).sort().join(',');
+
+  useEffect(() => {
+    if (!user || !liveLobbyIds) {
+      setTracking(false);
       return;
     }
 
@@ -55,76 +83,53 @@ export function useRealtimeLocation(user: User | null) {
       return;
     }
 
-    const participantRef = doc(db, 'participants', user.uid);
-
-    const writePosition = async (position: GeolocationPosition) => {
-      try {
-        await setDoc(
-          participantRef,
-          {
-            currentLocation: {
-              lat: roundForPublicDisplay(position.coords.latitude),
-              lng: roundForPublicDisplay(position.coords.longitude),
-              label: 'Live GPS',
-              updatedAt: new Date().toISOString(),
-            },
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `participants/${user.uid}`);
-      }
-    };
-
     const shouldWrite = (position: GeolocationPosition): boolean => {
       const now = Date.now();
-      const intervalOk = now - lastWriteRef.current >= MIN_UPDATE_INTERVAL_MS;
-
+      if (now - lastWriteRef.current < MIN_UPDATE_INTERVAL_MS) return false;
       if (!lastPositionRef.current) return true;
-
       const moved = haversineDistance(lastPositionRef.current, {
         lat: position.coords.latitude,
         lng: position.coords.longitude,
       });
-
-      return intervalOk && moved >= MIN_MOVEMENT_METERS;
+      return moved >= MIN_MOVEMENT_METERS;
     };
 
     const handlePosition = (position: GeolocationPosition) => {
       setTracking(true);
       setPermissionDenied(false);
+      if (!shouldWrite(position)) return;
 
-      if (shouldWrite(position)) {
-        lastWriteRef.current = Date.now();
-        lastPositionRef.current = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        writePosition(position);
+      lastWriteRef.current = Date.now();
+      lastPositionRef.current = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+      };
+
+      const lat = roundForSharing(position.coords.latitude);
+      const lng = roundForSharing(position.coords.longitude);
+
+      for (const lobby of liveLobbiesRef.current) {
+        writeLobbyLocation(lobby.id, user.uid, lat, lng).catch((error) => {
+          console.warn(`Could not share location with lobby ${lobby.id}:`, error);
+        });
       }
     };
 
     const handleError = (error: GeolocationPositionError) => {
       console.warn('Geolocation error:', error.message);
-      if (error.code === error.PERMISSION_DENIED) {
-        setPermissionDenied(true);
-      }
+      if (error.code === error.PERMISSION_DENIED) setPermissionDenied(true);
       setTracking(false);
     };
 
-    watchIdRef.current = navigator.geolocation.watchPosition(handlePosition, handleError, {
+    const watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
       enableHighAccuracy: true,
       maximumAge: 15_000,
       timeout: 30_000,
     });
 
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-    };
-  }, [user]);
+    return () => navigator.geolocation.clearWatch(watchId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, liveLobbyIds]);
 
-  return { tracking, permissionDenied };
+  return { tracking, permissionDenied, liveLobbies };
 }

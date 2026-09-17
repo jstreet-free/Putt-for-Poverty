@@ -54,6 +54,18 @@ service cloud.firestore {
                                incoming().email is string &&
                                incoming().email.size() < 256;
       }
+
+      // Index of the lobbies this user belongs to, so "my lobbies" is a plain
+      // owner-scoped list — no collection-group index, and no get() calls that
+      // would burn the 10-document-access budget a query is allowed.
+      // A lobby's creator (or an admin) can delete an entry when kicking.
+      match /lobbyMemberships/{lobbyId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId);
+        allow delete: if isOwner(userId) ||
+                      isAdmin() ||
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
+      }
     }
 
     match /participants/{userId} {
@@ -72,7 +84,7 @@ service cloud.firestore {
       allow update: if isAdmin() || (isOwner(userId) &&
                      isValidParticipant(incoming()) && (
                        (incoming().diff(existing()).affectedKeys().hasOnly([
-                         'location', 'currentLocation', 'updatedAt', 'name', 'golfClub', 'course', 'handicap',
+                         'location', 'updatedAt', 'name', 'golfClub', 'course', 'handicap',
                          'email', 'emailLower', 'membershipProofUrl', 'membershipProofFileName',
                          'membershipProofUploadedAt', 'avatarUrl'
                        ])) ||
@@ -150,6 +162,21 @@ service cloud.firestore {
              get(/databases/$(database)/documents/participants/$(uid)).data.get('usedRounds', 0);
     }
 
+    function lobbyData(lobbyId) {
+      return get(/databases/$(database)/documents/lobbies/$(lobbyId)).data;
+    }
+
+    function isLobbyMember(lobbyId, uid) {
+      return exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(uid));
+    }
+
+    // A lobby's event runs for 8 hours from its scheduled start. Live GPS is
+    // only shared inside that window — see the locations subcollection below.
+    function lobbyEventIsLive(lobbyId) {
+      return lobbyData(lobbyId).eventDate <= request.time &&
+             request.time < lobbyData(lobbyId).eventDate + duration.value(8, 'h');
+    }
+
     match /lobbies/{lobbyId} {
       // Every lobby is publicly listed/visible — closed lobbies just can't be
       // joined without the share code, which lives in the restricted
@@ -214,6 +241,21 @@ service cloud.firestore {
                       get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
 
         allow update: if false;
+      }
+
+      // Live GPS during a lobby's event. Readable only by that lobby's own
+      // members, and only while the event is actually running — outside the
+      // window there is nothing to read and nothing may be written.
+      match /locations/{userId} {
+        allow read: if isSignedIn() &&
+                    isLobbyMember(lobbyId, request.auth.uid) &&
+                    lobbyEventIsLive(lobbyId);
+
+        allow write: if isOwner(userId) &&
+                     isLobbyMember(lobbyId, userId) &&
+                     lobbyEventIsLive(lobbyId) &&
+                     incoming().lat is number &&
+                     incoming().lng is number;
       }
     }
   }

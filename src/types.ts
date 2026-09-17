@@ -16,12 +16,6 @@ export interface Participant {
     lng: number;
     label: string;
   };
-  currentLocation?: {
-    lat: number;
-    lng: number;
-    label: string;
-    updatedAt: string;
-  };
   updatedAt: string;
 }
 
@@ -148,9 +142,19 @@ export interface LobbyMember {
   userId: string;
   name: string;
   golfClub?: string;
+  avatarUrl?: string;
   joinedAt: any;
   chargeStatus?: 'charged' | 'insufficient_credit' | 'no_participant_record';
   chargedAt?: string;
+}
+
+// Live GPS shared inside a lobby, only while its event is running.
+export interface LobbyLocation {
+  id: string; // == userId
+  userId: string;
+  lat: number;
+  lng: number;
+  updatedAt: string;
 }
 
 export interface EventSettings {

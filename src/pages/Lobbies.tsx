@@ -4,14 +4,15 @@ import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import {
   Users, Lock, Globe, Calendar, Plus, Copy, Share2, LogOut, UserMinus,
   Trash2, X, Loader2, CheckCircle, ShieldCheck, KeyRound, Crown, Flag, ArrowRight,
+  Radio, MapPin,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { Lobby, LobbyMember } from '../types';
 import {
-  createLobby, deleteLobby, getMemberCount, getShareCode, joinLobby,
-  kickMember, leaveLobby, updateLobby,
+  createLobby, deleteLobby, ensureMembershipIndexed, getMemberCount, getMemberPreview,
+  getShareCode, isLobbyLive, joinLobby, kickMember, leaveLobby, updateLobby,
 } from '../lib/lobbyService';
 
 function toDate(value: any): Date | null {
@@ -54,6 +55,28 @@ function pickAccent(id: string) {
   return ACCENTS[hash % ACCENTS.length];
 }
 
+function MemberAvatar({ member, size = 40, ring = 'border-white' }: {
+  member: Pick<LobbyMember, 'id' | 'name' | 'avatarUrl'>;
+  size?: number;
+  ring?: string;
+}) {
+  const accent = pickAccent(member.id);
+  return (
+    <div
+      className={`rounded-full overflow-hidden border-2 ${ring} shadow-sm shrink-0 flex items-center justify-center ${member.avatarUrl ? 'bg-slate-100' : accent.avatar}`}
+      style={{ width: size, height: size }}
+    >
+      {member.avatarUrl ? (
+        <img src={member.avatarUrl} alt={member.name} className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-white font-black uppercase" style={{ fontSize: size * 0.4 }}>
+          {member.name?.[0] || '?'}
+        </span>
+      )}
+    </div>
+  );
+}
+
 interface LobbiesProps {
   user: FirebaseUser | null;
   participant: any;
@@ -66,6 +89,7 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [loading, setLoading] = useState(true);
   const [memberCounts, setMemberCounts] = useState<Record<string, number>>({});
+  const [memberPreviews, setMemberPreviews] = useState<Record<string, LobbyMember[]>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(() => searchParams.get('lobby'));
 
@@ -86,18 +110,28 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
   useEffect(() => {
     let active = true;
     (async () => {
-      const entries = await Promise.all(lobbies.map(async (l) => {
+      const results = await Promise.all(lobbies.map(async (l) => {
+        // A signed-out visitor can never read a private roster, so don't even
+        // ask — it would just be a guaranteed permission error per lobby.
+        if (l.isClosed && !user) return [l.id, 0, [] as LobbyMember[]] as const;
         try {
-          const count = await getMemberCount(l.id);
-          return [l.id, count] as const;
+          const [count, preview] = await Promise.all([
+            getMemberCount(l.id),
+            getMemberPreview(l.id, 4),
+          ]);
+          return [l.id, count, preview] as const;
         } catch {
-          return [l.id, 0] as const;
+          // Closed lobbies reject roster reads from non-members — the card
+          // just shows no avatars in that case.
+          return [l.id, 0, [] as LobbyMember[]] as const;
         }
       }));
-      if (active) setMemberCounts(Object.fromEntries(entries));
+      if (!active) return;
+      setMemberCounts(Object.fromEntries(results.map(([id, count]) => [id, count])));
+      setMemberPreviews(Object.fromEntries(results.map(([id, , preview]) => [id, preview])));
     })();
     return () => { active = false; };
-  }, [lobbies]);
+  }, [lobbies, user]);
 
   const selectedLobby = lobbies.find(l => l.id === selectedLobbyId) || null;
 
@@ -110,6 +144,7 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
       creatorId: user.uid,
       creatorName: participant.name,
       creatorGolfClub: participant.golfClub,
+      creatorAvatarUrl: participant.avatarUrl || user.photoURL || '',
     });
     setShowCreateModal(false);
     setSelectedLobbyId(id);
@@ -168,6 +203,7 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
               key={lobby.id}
               lobby={lobby}
               memberCount={memberCounts[lobby.id] ?? 0}
+              memberPreview={memberPreviews[lobby.id] ?? []}
               isMine={lobby.creatorId === user?.uid}
               onOpen={() => setSelectedLobbyId(lobby.id)}
             />
@@ -191,6 +227,10 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
             user={user}
             participant={participant}
             isAdmin={isAdmin}
+            onMembersChange={(lobbyId, updated) => {
+              setMemberCounts(prev => ({ ...prev, [lobbyId]: updated.length }));
+              setMemberPreviews(prev => ({ ...prev, [lobbyId]: updated.slice(0, 4) }));
+            }}
             onClose={() => {
               setSelectedLobbyId(null);
               if (searchParams.has('lobby')) {
@@ -205,11 +245,13 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
   );
 }
 
-function LobbyCard({ lobby, memberCount, isMine, onOpen }: {
-  lobby: Lobby; memberCount: number; isMine: boolean; onOpen: () => void;
+function LobbyCard({ lobby, memberCount, memberPreview, isMine, onOpen }: {
+  lobby: Lobby; memberCount: number; memberPreview: LobbyMember[]; isMine: boolean; onOpen: () => void;
 }) {
   const accent = pickAccent(lobby.id);
   const d = toDate(lobby.eventDate);
+  const live = isLobbyLive(lobby);
+  const overflow = memberCount - memberPreview.length;
 
   return (
     <motion.button
@@ -237,12 +279,20 @@ function LobbyCard({ lobby, memberCount, isMine, onOpen }: {
               <p className="text-xs text-slate-400 font-bold">{d ? formatTime(d) : ''}</p>
             </div>
           </div>
-          <span className={`shrink-0 flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-xl uppercase ${
-            lobby.isClosed ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'
-          }`}>
-            {lobby.isClosed ? <Lock size={12} /> : <Globe size={12} />}
-            {lobby.isClosed ? 'Private' : 'Open'}
-          </span>
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-xl uppercase ${
+              lobby.isClosed ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              {lobby.isClosed ? <Lock size={12} /> : <Globe size={12} />}
+              {lobby.isClosed ? 'Private' : 'Open'}
+            </span>
+            {live && (
+              <span className="flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-xl uppercase bg-rose-500 text-white">
+                <Radio size={11} className="animate-pulse" />
+                Live
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="text-sm text-slate-500 font-bold flex items-center gap-2">
@@ -252,18 +302,36 @@ function LobbyCard({ lobby, memberCount, isMine, onOpen }: {
 
         <div className="flex-1" />
 
-        <div className="flex items-center justify-between pt-4 border-t-2 border-slate-50">
-          <div className="flex items-center gap-2">
+        {/* Who's in — the roster at a glance */}
+        <div className="flex items-center gap-2">
+          {memberPreview.length > 0 ? (
+            <>
+              <div className="flex -space-x-2">
+                {memberPreview.map(m => (
+                  <MemberAvatar key={m.id} member={m} size={32} />
+                ))}
+                {overflow > 0 && (
+                  <div className="w-8 h-8 rounded-full border-2 border-white bg-slate-200 text-slate-600 text-[10px] font-black flex items-center justify-center shrink-0">
+                    +{overflow}
+                  </div>
+                )}
+              </div>
+              <span className="text-xs font-bold text-slate-400">{memberCount} in lobby</span>
+            </>
+          ) : (
             <span className={`flex items-center gap-1.5 text-xs font-black px-3 py-1.5 rounded-xl ${accent.chip}`}>
               <Users size={13} />
-              {memberCount}
+              {lobby.isClosed ? 'Private roster' : `${memberCount} in lobby`}
             </span>
-            <span className="text-xs font-bold text-slate-400 truncate max-w-[110px]">
-              {lobby.creatorName}{isMine ? ' (you)' : ''}
-            </span>
-          </div>
-          {lobby.status === 'charged' ? (
-            <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-xl uppercase">Started</span>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between pt-4 border-t-2 border-slate-50">
+          <span className="text-xs font-bold text-slate-400 truncate max-w-[150px]">
+            Host: {lobby.creatorName}{isMine ? ' (you)' : ''}
+          </span>
+          {lobby.status === 'charged' && !live ? (
+            <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-xl uppercase">Finished</span>
           ) : (
             <ArrowRight size={18} className={`${accent.text}`} />
           )}
@@ -375,11 +443,12 @@ function CreateLobbyModal({ onClose, onSubmit }: {
   );
 }
 
-function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
+function LobbyDetailModal({ lobby, user, participant, isAdmin, onMembersChange, onClose }: {
   lobby: Lobby;
   user: FirebaseUser;
   participant: any;
   isAdmin: boolean;
+  onMembersChange: (lobbyId: string, members: LobbyMember[]) => void;
   onClose: () => void;
 }) {
   const [members, setMembers] = useState<LobbyMember[]>([]);
@@ -402,14 +471,25 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
   const isMember = members.some(m => m.id === user.uid);
   const hasCredit = !!participant && (participant.paidRounds || 0) > (participant.usedRounds || 0);
   const eventStarted = lobby.status === 'charged' || (toDate(lobby.eventDate)?.getTime() ?? 0) <= Date.now();
+  const isLive = isLobbyLive(lobby);
 
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, 'lobbies', lobby.id, 'members'),
       (snap) => {
-        setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() } as LobbyMember)));
+        const next = snap.docs.map(d => ({ id: d.id, ...d.data() } as LobbyMember));
+        setMembers(next);
         setMembersError(false);
         setMembersLoading(false);
+        // Keeps the card behind the modal in step as people join, leave, or
+        // get kicked — no refetch needed, this listener is already live.
+        onMembersChange(lobby.id, next);
+
+        if (next.some(m => m.id === user.uid)) {
+          ensureMembershipIndexed(user.uid, lobby.id).catch((err) =>
+            console.warn('Could not index lobby membership:', err)
+          );
+        }
       },
       () => {
         setMembersError(true);
@@ -417,7 +497,8 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
       }
     );
     return () => unsub();
-  }, [lobby.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobby.id, user.uid]);
 
   useEffect(() => {
     if (!isCreator && !isAdmin) return;
@@ -465,6 +546,7 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
         userId: user.uid,
         name: participant.name,
         golfClub: participant.golfClub,
+        avatarUrl: participant.avatarUrl || user.photoURL || '',
         enteredCode: enteredCode.trim().toUpperCase(),
       });
       setEnteredCode('');
@@ -578,10 +660,46 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
             {lobby.isClosed ? <Lock size={11} /> : <Globe size={11} />}
             {lobby.isClosed ? 'Private' : 'Open'}
           </span>
+          {isLive && (
+            <span className="flex items-center gap-1 text-[10px] font-black bg-rose-500 text-white px-2 py-1 rounded-lg uppercase">
+              <Radio size={11} className="animate-pulse" />
+              Event Live
+            </span>
+          )}
           {lobby.status === 'charged' && (
             <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-1 rounded-lg uppercase">Credits Charged</span>
           )}
         </div>
+
+        {isMember && (
+          <Link
+            to="/map"
+            className={`flex items-center justify-between gap-3 p-4 rounded-2xl border-2 transition-colors ${
+              isLive
+                ? 'bg-emerald-50 border-emerald-100 hover:bg-emerald-100'
+                : 'bg-slate-50 border-slate-100 hover:bg-slate-100'
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                isLive ? 'bg-emerald-500 text-white' : 'bg-white text-slate-400 border border-slate-200'
+              }`}>
+                <MapPin size={18} />
+              </div>
+              <div className="min-w-0">
+                <div className="font-black text-slate-800 text-sm">
+                  {isLive ? 'Live positions on the map' : 'Player map'}
+                </div>
+                <div className="text-[11px] text-slate-500 font-medium">
+                  {isLive
+                    ? 'See where everyone in this lobby is right now.'
+                    : 'Other player position is going to be shown during an event.'}
+                </div>
+              </div>
+            </div>
+            <ArrowRight size={16} className="text-slate-400 shrink-0" />
+          </Link>
+        )}
 
         {editMode && canManage && (
           <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-100 space-y-3">
@@ -679,19 +797,22 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
           ) : (
             <div className="space-y-2">
               {members.map((m) => (
-                <div key={m.id} className="flex items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <div
+                  key={m.id}
+                  className={`flex items-center justify-between gap-3 p-3 rounded-2xl border-2 transition-colors ${
+                    m.id === user.uid ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-100'
+                  }`}
+                >
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center text-slate-400 font-black uppercase shrink-0 border border-slate-100">
-                      {m.name?.[0] || '?'}
-                    </div>
+                    <MemberAvatar member={m} size={40} />
                     <div className="min-w-0">
-                      <div className="font-bold text-slate-800 text-sm truncate flex items-center gap-1">
-                        {m.name}
+                      <div className="font-black text-slate-800 text-sm truncate flex items-center gap-1.5">
+                        {m.id === user.uid ? 'You' : m.name}
                         {m.id === lobby.creatorId && <Crown size={12} className="text-amber-500 shrink-0" />}
                       </div>
                       {m.golfClub && (
-                        <div className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                          <Flag size={10} />
+                        <div className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1 truncate">
+                          <Flag size={10} className="shrink-0" />
                           {m.golfClub}
                         </div>
                       )}

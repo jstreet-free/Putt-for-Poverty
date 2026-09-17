@@ -37,6 +37,7 @@ export function Register({ user, participant }: { user: any, participant: any })
   const [myLobbies, setMyLobbies] = useState<Lobby[]>([]);
   const [myScores, setMyScores] = useState<ScoreEntry[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
+  const [lobbiesError, setLobbiesError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     name: user?.displayName || '',
@@ -96,8 +97,14 @@ export function Register({ user, participant }: { user: any, participant: any })
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'scores'));
 
     getMyLobbies(user.uid)
-      .then(setMyLobbies)
-      .catch((err) => console.error('Failed to load lobbies:', err))
+      .then((lobbies) => {
+        setMyLobbies(lobbies);
+        setLobbiesError(null);
+      })
+      .catch((err) => {
+        console.error('Failed to load lobbies:', err);
+        setLobbiesError('We could not load your lobbies just now.');
+      })
       .finally(() => setActivityLoading(false));
 
     return () => unsubScores();
@@ -686,7 +693,14 @@ export function Register({ user, participant }: { user: any, participant: any })
         </div>
       </div>
 
-      {user && <MyActivity lobbies={myLobbies} scores={myScores} loading={activityLoading} />}
+      {user && (
+        <MyActivity
+          lobbies={myLobbies}
+          scores={myScores}
+          loading={activityLoading}
+          lobbiesError={lobbiesError}
+        />
+      )}
     </div>
   );
 }
@@ -703,7 +717,12 @@ function formatScoreDate(value: any): string {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function MyActivity({ lobbies, scores, loading }: { lobbies: Lobby[]; scores: ScoreEntry[]; loading: boolean }) {
+function MyActivity({ lobbies, scores, loading, lobbiesError }: {
+  lobbies: Lobby[];
+  scores: ScoreEntry[];
+  loading: boolean;
+  lobbiesError: string | null;
+}) {
   const navigate = useNavigate();
 
   return (
@@ -720,6 +739,8 @@ function MyActivity({ lobbies, scores, loading }: { lobbies: Lobby[]; scores: Sc
         </h3>
         {loading ? (
           <div className="text-center py-6 text-slate-400"><Loader2 className="animate-spin mx-auto" size={20} /></div>
+        ) : lobbiesError ? (
+          <p className="text-sm text-rose-600 font-bold">{lobbiesError}</p>
         ) : lobbies.length === 0 ? (
           <p className="text-sm text-slate-400 font-medium">You haven't joined or created any lobbies yet.</p>
         ) : (

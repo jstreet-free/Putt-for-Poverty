@@ -1,9 +1,29 @@
 import { db } from './firebase';
 import {
-  collection, collectionGroup, doc, deleteDoc, getDoc, getDocs, getCountFromServer,
-  query, serverTimestamp, setDoc, Timestamp, where,
+  collection, doc, deleteDoc, getDoc, getDocs, getCountFromServer,
+  limit as fbLimit, onSnapshot, query, serverTimestamp, setDoc, Timestamp,
 } from 'firebase/firestore';
-import { Lobby } from '../types';
+import { Lobby, LobbyLocation, LobbyMember } from '../types';
+
+// A lobby's event runs for 8 hours from its scheduled start. Kept in sync with
+// the same window in firestore.rules, which is what actually enforces it.
+export const EVENT_DURATION_MS = 8 * 60 * 60 * 1000;
+
+function membershipRef(userId: string, lobbyId: string) {
+  return doc(db, 'users', userId, 'lobbyMemberships', lobbyId);
+}
+
+export function lobbyStartMs(lobby: Pick<Lobby, 'eventDate'>): number {
+  const value: any = lobby.eventDate;
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  return new Date(value).getTime();
+}
+
+export function isLobbyLive(lobby: Pick<Lobby, 'eventDate'>, now = Date.now()): boolean {
+  const start = lobbyStartMs(lobby);
+  return start > 0 && now >= start && now < start + EVENT_DURATION_MS;
+}
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous O/0/I/1
 
@@ -22,6 +42,7 @@ interface CreateLobbyInput {
   creatorId: string;
   creatorName: string;
   creatorGolfClub?: string;
+  creatorAvatarUrl?: string;
 }
 
 // Writes are sequential (not batched) on purpose: the member/secret-join
@@ -53,6 +74,12 @@ export async function createLobby(input: CreateLobbyInput): Promise<{ id: string
     userId: input.creatorId,
     name: input.creatorName,
     golfClub: input.creatorGolfClub || '',
+    avatarUrl: input.creatorAvatarUrl || '',
+    joinedAt: serverTimestamp(),
+  });
+
+  await setDoc(membershipRef(input.creatorId, lobbyRef.id), {
+    lobbyId: lobbyRef.id,
     joinedAt: serverTimestamp(),
   });
 
@@ -65,6 +92,7 @@ interface JoinLobbyInput {
   userId: string;
   name: string;
   golfClub?: string;
+  avatarUrl?: string;
   enteredCode?: string;
 }
 
@@ -73,20 +101,27 @@ export async function joinLobby(input: JoinLobbyInput): Promise<void> {
     userId: input.userId,
     name: input.name,
     golfClub: input.golfClub || '',
+    avatarUrl: input.avatarUrl || '',
     joinedAt: serverTimestamp(),
   };
   if (input.isClosed) {
     data.enteredCode = input.enteredCode || '';
   }
   await setDoc(doc(db, 'lobbies', input.lobbyId, 'members', input.userId), data);
+  await setDoc(membershipRef(input.userId, input.lobbyId), {
+    lobbyId: input.lobbyId,
+    joinedAt: serverTimestamp(),
+  });
 }
 
 export async function leaveLobby(lobbyId: string, userId: string): Promise<void> {
   await deleteDoc(doc(db, 'lobbies', lobbyId, 'members', userId));
+  await deleteDoc(membershipRef(userId, lobbyId));
 }
 
 export async function kickMember(lobbyId: string, memberId: string): Promise<void> {
   await deleteDoc(doc(db, 'lobbies', lobbyId, 'members', memberId));
+  await deleteDoc(membershipRef(memberId, lobbyId));
 }
 
 export async function deleteLobby(lobbyId: string): Promise<void> {
@@ -128,21 +163,55 @@ export async function getMemberCount(lobbyId: string): Promise<number> {
   return snap.data().count;
 }
 
-// Uses a collection-group query scoped to the caller's own membership docs
-// (doc id == uid, enforced at write time), so the "members" security rule
-// resolves to true for every document this query could possibly match.
-export async function getMyLobbies(uid: string): Promise<Lobby[]> {
-  const membershipQuery = query(collectionGroup(db, 'members'), where('userId', '==', uid));
-  const memberSnap = await getDocs(membershipQuery);
+// Backfills the membership index for anyone who joined a lobby before that
+// index existed. Cheap and idempotent: one read, and a write only if missing.
+export async function ensureMembershipIndexed(userId: string, lobbyId: string): Promise<void> {
+  const ref = membershipRef(userId, lobbyId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return;
+  await setDoc(ref, { lobbyId, joinedAt: serverTimestamp() });
+}
 
-  const lobbies = await Promise.all(memberSnap.docs.map(async (memberDoc) => {
-    const lobbyRef = memberDoc.ref.parent.parent;
-    if (!lobbyRef) return null;
-    const lobbySnap = await getDoc(lobbyRef);
+export async function getMemberPreview(lobbyId: string, max = 5): Promise<LobbyMember[]> {
+  const snap = await getDocs(query(collection(db, 'lobbies', lobbyId, 'members'), fbLimit(max)));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as LobbyMember));
+}
+
+export async function writeLobbyLocation(lobbyId: string, userId: string, lat: number, lng: number): Promise<void> {
+  await setDoc(doc(db, 'lobbies', lobbyId, 'locations', userId), {
+    userId,
+    lat,
+    lng,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export function subscribeToLobbyLocations(
+  lobbyId: string,
+  onChange: (locations: LobbyLocation[]) => void,
+  onError?: (err: unknown) => void
+) {
+  return onSnapshot(
+    collection(db, 'lobbies', lobbyId, 'locations'),
+    (snap) => onChange(snap.docs.map(d => ({ id: d.id, ...d.data() } as LobbyLocation))),
+    (err) => onError?.(err)
+  );
+}
+
+// Reads the caller's own membership index, then loads those lobby documents
+// (which are publicly readable). Deliberately not a collection-group query:
+// that needs a manually created index, and its rule spends get() calls against
+// the 10-document-access budget Firestore allows a single query.
+export async function getMyLobbies(uid: string): Promise<Lobby[]> {
+  const membershipSnap = await getDocs(collection(db, 'users', uid, 'lobbyMemberships'));
+
+  const lobbies = await Promise.all(membershipSnap.docs.map(async (membership) => {
+    const lobbySnap = await getDoc(doc(db, 'lobbies', membership.id));
+    // A deleted lobby leaves its membership entry behind; just skip it.
     return lobbySnap.exists() ? ({ id: lobbySnap.id, ...lobbySnap.data() } as Lobby) : null;
   }));
 
   return lobbies
     .filter((l): l is Lobby => !!l)
-    .sort((a, b) => (a.eventDate?.toMillis?.() ?? 0) - (b.eventDate?.toMillis?.() ?? 0));
+    .sort((a, b) => lobbyStartMs(a) - lobbyStartMs(b));
 }

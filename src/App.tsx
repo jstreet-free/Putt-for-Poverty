@@ -102,7 +102,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home participant={participant} />} />
             <Route path="/leaderboard" element={<Leaderboard user={user} />} />
-            <Route path="/map" element={<MapPage />} />
+            <Route path="/map" element={<MapPage user={user} />} />
             <Route
               path="/lobbies"
               element={<Lobbies user={user} participant={participant} isAdmin={!!user && (userDoc?.role === 'admin' || user.email === 'admin@gmail.com')} />}
