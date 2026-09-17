@@ -10,6 +10,7 @@ export interface Participant {
   paidRounds: number;
   usedRounds: number;
   score?: number;
+  avatarUrl?: string;
   location?: {
     lat: number;
     lng: number;
@@ -61,6 +62,7 @@ export interface AppUser {
   location?: { label?: string; lat?: number; lng?: number };
   membershipProofUrl?: string;
   membershipProofFileName?: string;
+  avatarUrl?: string;
   [key: string]: any;
 }
 

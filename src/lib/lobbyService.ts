@@ -1,8 +1,9 @@
 import { db } from './firebase';
 import {
-  collection, doc, deleteDoc, getDoc, getCountFromServer,
-  serverTimestamp, setDoc, Timestamp,
+  collection, collectionGroup, doc, deleteDoc, getDoc, getDocs, getCountFromServer,
+  query, serverTimestamp, setDoc, Timestamp, where,
 } from 'firebase/firestore';
+import { Lobby } from '../types';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous O/0/I/1
 
@@ -92,12 +93,29 @@ export async function deleteLobby(lobbyId: string): Promise<void> {
   await deleteDoc(doc(db, 'lobbies', lobbyId));
 }
 
-export async function updateLobby(lobbyId: string, updates: { name?: string; isClosed?: boolean; eventDate?: Date }): Promise<void> {
+// Returns the (possibly newly-generated) share code when the lobby ends up
+// closed — the caller needs it to keep showing an up-to-date "share" panel
+// right after switching a lobby to private.
+export async function updateLobby(
+  lobbyId: string,
+  updates: { name?: string; isClosed?: boolean; eventDate?: Date },
+  creatorId?: string
+): Promise<{ shareCode: string | null }> {
   const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.isClosed !== undefined) payload.isClosed = updates.isClosed;
   if (updates.eventDate !== undefined) payload.eventDate = Timestamp.fromDate(updates.eventDate);
   await setDoc(doc(db, 'lobbies', lobbyId), payload, { merge: true });
+
+  if (updates.isClosed !== true || !creatorId) {
+    return { shareCode: null };
+  }
+  const existingCode = await getShareCode(lobbyId);
+  if (existingCode) return { shareCode: existingCode };
+
+  const shareCode = generateShareCode();
+  await setDoc(doc(db, 'lobbies', lobbyId, 'secret', 'join'), { creatorId, code: shareCode });
+  return { shareCode };
 }
 
 export async function getShareCode(lobbyId: string): Promise<string | null> {
@@ -108,4 +126,23 @@ export async function getShareCode(lobbyId: string): Promise<string | null> {
 export async function getMemberCount(lobbyId: string): Promise<number> {
   const snap = await getCountFromServer(collection(db, 'lobbies', lobbyId, 'members'));
   return snap.data().count;
+}
+
+// Uses a collection-group query scoped to the caller's own membership docs
+// (doc id == uid, enforced at write time), so the "members" security rule
+// resolves to true for every document this query could possibly match.
+export async function getMyLobbies(uid: string): Promise<Lobby[]> {
+  const membershipQuery = query(collectionGroup(db, 'members'), where('userId', '==', uid));
+  const memberSnap = await getDocs(membershipQuery);
+
+  const lobbies = await Promise.all(memberSnap.docs.map(async (memberDoc) => {
+    const lobbyRef = memberDoc.ref.parent.parent;
+    if (!lobbyRef) return null;
+    const lobbySnap = await getDoc(lobbyRef);
+    return lobbySnap.exists() ? ({ id: lobbySnap.id, ...lobbySnap.data() } as Lobby) : null;
+  }));
+
+  return lobbies
+    .filter((l): l is Lobby => !!l)
+    .sort((a, b) => (a.eventDate?.toMillis?.() ?? 0) - (b.eventDate?.toMillis?.() ?? 0));
 }

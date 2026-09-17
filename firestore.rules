@@ -71,7 +71,11 @@ service cloud.firestore {
 
       allow update: if isAdmin() || (isOwner(userId) &&
                      isValidParticipant(incoming()) && (
-                       (incoming().diff(existing()).affectedKeys().hasOnly(['location', 'currentLocation', 'updatedAt', 'name', 'golfClub', 'course', 'handicap'])) ||
+                       (incoming().diff(existing()).affectedKeys().hasOnly([
+                         'location', 'currentLocation', 'updatedAt', 'name', 'golfClub', 'course', 'handicap',
+                         'email', 'emailLower', 'membershipProofUrl', 'membershipProofFileName',
+                         'membershipProofUploadedAt', 'avatarUrl'
+                       ])) ||
                        (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']) &&
                         incoming().score is number && incoming().score >= 0 && incoming().score <= 100 &&
                         incoming().usedRounds is number &&
@@ -184,14 +188,16 @@ service cloud.firestore {
       }
 
       match /members/{memberId} {
-        // Open-lobby rosters are visible to any signed-in visitor; closed-lobby
-        // rosters only to people already inside (or the creator/admin) — so an
-        // invite code, once used, only ever reaches people who already had it.
-        allow read: if isSignedIn() &&
-                    (!get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
-                     isAdmin() ||
-                     get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid ||
-                     exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(request.auth.uid)));
+        // Open-lobby rosters (and member counts) are visible to anyone,
+        // signed in or not — matching the lobby doc's own public read rule.
+        // Closed-lobby rosters are restricted to people already inside (or
+        // the creator/admin), so an invite code, once used, only ever
+        // reaches people who already had it.
+        allow read: if !get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
+                    (isSignedIn() &&
+                     (isAdmin() ||
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid ||
+                      exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(request.auth.uid))));
 
         allow create: if isOwner(memberId) &&
                       incoming().userId == memberId &&

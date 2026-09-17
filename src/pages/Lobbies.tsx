@@ -3,10 +3,10 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import {
   Users, Lock, Globe, Calendar, Plus, Copy, Share2, LogOut, UserMinus,
-  Trash2, X, Loader2, CheckCircle, ShieldCheck, KeyRound, Crown, Flag,
+  Trash2, X, Loader2, CheckCircle, ShieldCheck, KeyRound, Crown, Flag, ArrowRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { Lobby, LobbyMember } from '../types';
 import {
@@ -28,18 +28,24 @@ function formatDateTime(value: any): string {
   });
 }
 
+function formatTime(value: any): string {
+  const d = toDate(value);
+  if (!d) return '';
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
 function toDatetimeLocalValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const ACCENTS = [
-  { border: 'border-l-emerald-500', avatar: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-600' },
-  { border: 'border-l-blue-500', avatar: 'bg-blue-500', chip: 'bg-blue-50 text-blue-600' },
-  { border: 'border-l-violet-500', avatar: 'bg-violet-500', chip: 'bg-violet-50 text-violet-600' },
-  { border: 'border-l-amber-500', avatar: 'bg-amber-500', chip: 'bg-amber-50 text-amber-600' },
-  { border: 'border-l-rose-500', avatar: 'bg-rose-500', chip: 'bg-rose-50 text-rose-600' },
-  { border: 'border-l-cyan-500', avatar: 'bg-cyan-500', chip: 'bg-cyan-50 text-cyan-600' },
+  { avatar: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-600', text: 'text-emerald-500', gradient: 'from-emerald-400 to-teal-500' },
+  { avatar: 'bg-blue-500', chip: 'bg-blue-50 text-blue-600', text: 'text-blue-500', gradient: 'from-blue-400 to-indigo-500' },
+  { avatar: 'bg-violet-500', chip: 'bg-violet-50 text-violet-600', text: 'text-violet-500', gradient: 'from-violet-400 to-purple-500' },
+  { avatar: 'bg-amber-500', chip: 'bg-amber-50 text-amber-600', text: 'text-amber-500', gradient: 'from-amber-400 to-orange-500' },
+  { avatar: 'bg-rose-500', chip: 'bg-rose-50 text-rose-600', text: 'text-rose-500', gradient: 'from-rose-400 to-pink-500' },
+  { avatar: 'bg-cyan-500', chip: 'bg-cyan-50 text-cyan-600', text: 'text-cyan-500', gradient: 'from-cyan-400 to-blue-500' },
 ];
 
 function pickAccent(id: string) {
@@ -56,11 +62,12 @@ interface LobbiesProps {
 
 export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [loading, setLoading] = useState(true);
   const [memberCounts, setMemberCounts] = useState<Record<string, number>>({});
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(null);
+  const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(() => searchParams.get('lobby'));
 
   const hasCredit = !!participant && (participant.paidRounds || 0) > (participant.usedRounds || 0);
 
@@ -184,7 +191,13 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
             user={user}
             participant={participant}
             isAdmin={isAdmin}
-            onClose={() => setSelectedLobbyId(null)}
+            onClose={() => {
+              setSelectedLobbyId(null);
+              if (searchParams.has('lobby')) {
+                searchParams.delete('lobby');
+                setSearchParams(searchParams, { replace: true });
+              }
+            }}
           />
         )}
       </AnimatePresence>
@@ -196,48 +209,65 @@ function LobbyCard({ lobby, memberCount, isMine, onOpen }: {
   lobby: Lobby; memberCount: number; isMine: boolean; onOpen: () => void;
 }) {
   const accent = pickAccent(lobby.id);
+  const d = toDate(lobby.eventDate);
+
   return (
     <motion.button
       onClick={onOpen}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`text-left bg-white p-6 rounded-[2rem] border-2 border-l-4 border-slate-100 ${accent.border} shadow-md hover:shadow-xl hover:-translate-y-1 transition-all space-y-4`}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.99 }}
+      className="text-left bg-white rounded-[2rem] border-2 border-slate-100 shadow-md hover:shadow-2xl transition-shadow overflow-hidden flex flex-col"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-10 h-10 rounded-xl ${accent.avatar} text-white font-black flex items-center justify-center shrink-0 shadow-sm`}>
-            {lobby.name?.[0]?.toUpperCase() || '?'}
-          </div>
-          <h3 className="font-black text-slate-900 text-lg leading-tight truncate">{lobby.name}</h3>
-        </div>
-        <span className={`shrink-0 flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
-          lobby.isClosed ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'
-        }`}>
-          {lobby.isClosed ? <Lock size={11} /> : <Globe size={11} />}
-          {lobby.isClosed ? 'Private' : 'Open'}
-        </span>
-      </div>
+      <div className={`h-2.5 w-full bg-gradient-to-r ${accent.gradient}`} />
 
-      <div className="space-y-2 text-sm text-slate-500 font-medium">
-        <div className="flex items-center gap-2">
-          <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${accent.chip}`}>
-            <Calendar size={12} />
+      <div className="p-7 space-y-5 flex-1 flex flex-col">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-4 min-w-0">
+            {/* Ticket-style date block */}
+            <div className={`w-14 h-14 rounded-2xl ${accent.avatar} text-white shrink-0 shadow-md flex flex-col items-center justify-center leading-none`}>
+              <span className="text-[9px] font-black uppercase tracking-widest opacity-80">
+                {d ? d.toLocaleDateString(undefined, { month: 'short' }) : '--'}
+              </span>
+              <span className="text-xl font-black">{d ? d.getDate() : '?'}</span>
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-black text-slate-900 text-xl leading-tight truncate">{lobby.name}</h3>
+              <p className="text-xs text-slate-400 font-bold">{d ? formatTime(d) : ''}</p>
+            </div>
+          </div>
+          <span className={`shrink-0 flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-xl uppercase ${
+            lobby.isClosed ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'
+          }`}>
+            {lobby.isClosed ? <Lock size={12} /> : <Globe size={12} />}
+            {lobby.isClosed ? 'Private' : 'Open'}
           </span>
+        </div>
+
+        <div className="text-sm text-slate-500 font-bold flex items-center gap-2">
+          <Calendar size={14} className="text-slate-400 shrink-0" />
           {formatDateTime(lobby.eventDate)}
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${accent.chip}`}>
-            <Users size={12} />
-          </span>
-          {memberCount} joined
-        </div>
-      </div>
 
-      <div className="flex items-center justify-between pt-2 border-t border-slate-50">
-        <span className="text-xs font-bold text-slate-400">Host: {lobby.creatorName}{isMine ? ' (you)' : ''}</span>
-        {lobby.status === 'charged' && (
-          <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-1 rounded-lg uppercase">Started</span>
-        )}
+        <div className="flex-1" />
+
+        <div className="flex items-center justify-between pt-4 border-t-2 border-slate-50">
+          <div className="flex items-center gap-2">
+            <span className={`flex items-center gap-1.5 text-xs font-black px-3 py-1.5 rounded-xl ${accent.chip}`}>
+              <Users size={13} />
+              {memberCount}
+            </span>
+            <span className="text-xs font-bold text-slate-400 truncate max-w-[110px]">
+              {lobby.creatorName}{isMine ? ' (you)' : ''}
+            </span>
+          </div>
+          {lobby.status === 'charged' ? (
+            <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-xl uppercase">Started</span>
+          ) : (
+            <ArrowRight size={18} className={`${accent.text}`} />
+          )}
+        </div>
       </div>
     </motion.button>
   );
@@ -362,6 +392,7 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
   const [busy, setBusy] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editName, setEditName] = useState(lobby.name);
+  const [editIsClosed, setEditIsClosed] = useState(lobby.isClosed);
   const [editDate, setEditDate] = useState(() => {
     const d = toDate(lobby.eventDate);
     return d ? toDatetimeLocalValue(d) : '';
@@ -488,7 +519,12 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
     if (isNaN(parsed.getTime()) || parsed <= new Date()) return;
     setBusy(true);
     try {
-      await updateLobby(lobby.id, { name: editName.trim(), eventDate: parsed });
+      const result = await updateLobby(
+        lobby.id,
+        { name: editName.trim(), isClosed: editIsClosed, eventDate: parsed },
+        lobby.creatorId
+      );
+      if (result.shareCode) setShareCode(result.shareCode);
       setEditMode(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `lobbies/${lobby.id}`);
@@ -555,6 +591,21 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
               onChange={(e) => setEditDate(e.target.value)}
               className="w-full bg-white border-2 border-slate-100 rounded-xl p-3 font-bold text-slate-900"
             />
+            <label className="flex items-center gap-3 bg-white border-2 border-slate-100 rounded-xl p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!editIsClosed}
+                onChange={(e) => setEditIsClosed(!e.target.checked)}
+                className="w-5 h-5 accent-emerald-600"
+              />
+              <div>
+                <div className="font-black text-slate-800 text-sm flex items-center gap-1.5">
+                  {editIsClosed ? <Lock size={13} className="text-violet-500" /> : <Globe size={13} className="text-emerald-500" />}
+                  {editIsClosed ? 'Private — code required to join' : 'Open — anyone can join'}
+                </div>
+                <div className="text-xs text-slate-400 font-medium">Tick to make this lobby open to everyone.</div>
+              </div>
+            </label>
             <div className="flex gap-2">
               <button onClick={() => setEditMode(false)} className="flex-1 bg-white border-2 border-slate-200 p-2.5 rounded-xl font-black text-xs uppercase text-slate-600">Cancel</button>
               <button onClick={handleSaveEdit} disabled={busy} className="flex-1 bg-blue-600 text-white p-2.5 rounded-xl font-black text-xs uppercase disabled:opacity-50">Save</button>
@@ -694,7 +745,13 @@ function LobbyDetailModal({ lobby, user, participant, isAdmin, onClose }: {
           )}
           {canManage && !editMode && !eventStarted && (
             <button
-              onClick={() => setEditMode(true)}
+              onClick={() => {
+                setEditName(lobby.name);
+                setEditIsClosed(lobby.isClosed);
+                const d = toDate(lobby.eventDate);
+                setEditDate(d ? toDatetimeLocalValue(d) : '');
+                setEditMode(true);
+              }}
               className="flex-1 bg-slate-100 text-slate-600 p-3 rounded-xl font-black text-xs uppercase hover:bg-slate-200 transition-colors"
             >
               Edit Details
