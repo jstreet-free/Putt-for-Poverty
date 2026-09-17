@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(firebase --version)"
+      "Bash(firebase --version)",
+      "Bash(npm run *)",
+      "Bash(lsof -ti:3000 -sTCP:LISTEN)",
+      "Bash(xargs -r kill)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(npx playwright *)",
+      "Bash(echo \"install exit: $?\")",
+      "Read(//tmp/**)",
+      "Bash(node check-lobbies.mjs)",
+      "Bash(node check-footer-color.mjs)"
     ]
   }
 }

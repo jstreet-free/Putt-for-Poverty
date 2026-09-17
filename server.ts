@@ -7,6 +7,7 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 import { verifyCaller } from './api/_lib/auth';
+import chargeLobbyCreditsHandler from './api/charge-lobby-credits';
 
 dotenv.config();
 
@@ -115,6 +116,8 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
+  app.all("/api/charge-lobby-credits", (req, res) => chargeLobbyCreditsHandler(req, res));
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

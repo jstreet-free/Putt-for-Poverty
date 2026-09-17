@@ -128,6 +128,29 @@ export interface AdminWarning {
   resolved?: boolean;
 }
 
+export interface Lobby {
+  id: string;
+  name: string;
+  creatorId: string;
+  creatorName: string;
+  isClosed: boolean;
+  eventDate: any; // Firestore Timestamp
+  status: 'scheduled' | 'charged';
+  createdAt: any;
+  updatedAt?: any;
+  chargedAt?: string;
+}
+
+export interface LobbyMember {
+  id: string; // == userId
+  userId: string;
+  name: string;
+  golfClub?: string;
+  joinedAt: any;
+  chargeStatus?: 'charged' | 'insufficient_credit' | 'no_participant_record';
+  chargedAt?: string;
+}
+
 export interface EventSettings {
   dateLabel: string; 
   startDate?: string;

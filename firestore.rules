@@ -137,5 +137,78 @@ service cloud.firestore {
     match /warnings/{id} {
       allow write: if isAdmin();
     }
+
+    // --- Lobbies (scheduled meetups; credits are charged separately by a
+    // trusted server job once a lobby's eventDate arrives) ---
+    function hasAvailableCredit(uid) {
+      return exists(/databases/$(database)/documents/participants/$(uid)) &&
+             get(/databases/$(database)/documents/participants/$(uid)).data.get('paidRounds', 0) >
+             get(/databases/$(database)/documents/participants/$(uid)).data.get('usedRounds', 0);
+    }
+
+    match /lobbies/{lobbyId} {
+      // Every lobby is publicly listed/visible — closed lobbies just can't be
+      // joined without the share code, which lives in the restricted
+      // secret/join subdocument below, never on this document.
+      allow read: if true;
+
+      allow create: if isSignedIn() &&
+                    incoming().creatorId == request.auth.uid &&
+                    incoming().creatorName is string && incoming().creatorName.size() > 0 &&
+                    incoming().name is string && incoming().name.size() > 0 && incoming().name.size() < 100 &&
+                    incoming().isClosed is bool &&
+                    incoming().eventDate is timestamp && incoming().eventDate > request.time &&
+                    incoming().status == 'scheduled' &&
+                    hasAvailableCredit(request.auth.uid);
+
+      allow update: if isAdmin() ||
+                    (isSignedIn() && existing().creatorId == request.auth.uid &&
+                     existing().status == 'scheduled' &&
+                     incoming().diff(existing()).affectedKeys().hasOnly(['name', 'isClosed', 'eventDate', 'updatedAt']) &&
+                     incoming().name is string && incoming().name.size() > 0 && incoming().name.size() < 100 &&
+                     incoming().isClosed is bool &&
+                     incoming().eventDate is timestamp && incoming().eventDate > request.time);
+
+      allow delete: if isAdmin() ||
+                    (isSignedIn() && existing().creatorId == request.auth.uid && existing().status == 'scheduled');
+
+      // Holds the invite code for closed lobbies. Only the creator/admin can
+      // ever read it back (e.g. to redisplay it for copying) — it is never
+      // included on the publicly-readable lobby document above.
+      match /secret/join {
+        allow create: if isSignedIn() &&
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid &&
+                      incoming().code is string && incoming().code.size() >= 4 && incoming().code.size() <= 20;
+        allow get: if isSignedIn() &&
+                   (get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid || isAdmin());
+      }
+
+      match /members/{memberId} {
+        // Open-lobby rosters are visible to any signed-in visitor; closed-lobby
+        // rosters only to people already inside (or the creator/admin) — so an
+        // invite code, once used, only ever reaches people who already had it.
+        allow read: if isSignedIn() &&
+                    (!get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
+                     isAdmin() ||
+                     get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid ||
+                     exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(request.auth.uid)));
+
+        allow create: if isOwner(memberId) &&
+                      incoming().userId == memberId &&
+                      incoming().name is string && incoming().name.size() > 0 &&
+                      hasAvailableCredit(memberId) &&
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.status == 'scheduled' &&
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.eventDate > request.time &&
+                      (!get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
+                       memberId == get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId ||
+                       incoming().enteredCode == get(/databases/$(database)/documents/lobbies/$(lobbyId)/secret/join).data.code);
+
+        allow delete: if isOwner(memberId) ||
+                      isAdmin() ||
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
+
+        allow update: if false;
+      }
+    }
   }
 }
