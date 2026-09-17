@@ -1,242 +1,341 @@
-import { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { useState, useEffect, useMemo } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { User, Flag, MapPin, RefreshCw } from 'lucide-react';
-import { Participant } from '../types';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { Lock, Radio, Clock, Users, Navigation } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import type { User as FirebaseUser } from 'firebase/auth';
+import { Lobby, LobbyLocation, LobbyMember } from '../types';
+import { getMyLobbies, isLobbyLive, subscribeToLobbyLocations } from '../lib/lobbyService';
 
-// Custom pin icons as inline SVG so we don't need to configure Leaflet's default
-// marker image assets (a common Vite/bundler pain point with the stock png icons).
-function createPinIcon(isLive: boolean) {
-  const color = isLive ? '#10b981' : '#334155'; // emerald-500 for live GPS, slate-700 for registered city
+interface PlayerPin {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  golfClub?: string;
+  lat: number;
+  lng: number;
+  updatedAt?: string;
+  isSelf: boolean;
+}
+
+function createAvatarIcon(pin: PlayerPin) {
+  const ring = pin.isSelf ? '#f59e0b' : '#10b981';
+  const inner = pin.avatarUrl
+    ? `<img src="${escapeHtml(pin.avatarUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
+    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${ring};color:#fff;font-weight:800;font-size:16px;font-family:system-ui,sans-serif;">${escapeHtml((pin.name?.[0] || '?').toUpperCase())}</div>`;
+
   return L.divIcon({
     className: '',
     html: `
-      <div style="position: relative; width: 32px; height: 42px;">
-        <svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg">
-          <path d="M16 0C7.163 0 0 7.163 0 16c0 12 16 26 16 26s16-14 16-26C32 7.163 24.837 0 16 0z" fill="${color}"/>
-          <circle cx="16" cy="16" r="6" fill="white"/>
-        </svg>
-        ${isLive ? '<div style="position:absolute; top:6px; left:6px; width:20px; height:20px; border-radius:50%; background:#10b981; opacity:0.45;"></div>' : ''}
+      <div style="position:relative;width:46px;height:56px;">
+        <div style="width:44px;height:44px;border-radius:9999px;overflow:hidden;border:3px solid ${ring};box-shadow:0 4px 12px rgba(15,23,42,0.35);background:#fff;">
+          ${inner}
+        </div>
+        <div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:10px solid ${ring};"></div>
       </div>
     `,
-    iconSize: [32, 42],
-    iconAnchor: [16, 42],
-    popupAnchor: [0, -38],
+    iconSize: [46, 56],
+    iconAnchor: [23, 56],
+    popupAnchor: [0, -52],
   });
 }
 
-// Session cache so we never geocode the same city label twice
-const geocodeCache = new Map<string, { lat: number; lng: number }>();
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-async function geocodeLabel(label: string): Promise<{ lat: number; lng: number } | null> {
-  if (geocodeCache.has(label)) return geocodeCache.get(label)!;
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(label)}`
-    );
-    const data = await res.json();
-    if (data && data[0]) {
-      const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-      geocodeCache.set(label, coords);
-      return coords;
+// Keeps the viewport on the pins as they load / move.
+function MapFocus({ pins }: { pins: PlayerPin[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (pins.length === 0) return;
+    if (pins.length === 1) {
+      map.setView([pins[0].lat, pins[0].lng], 13, { animate: true });
+      return;
     }
-  } catch (error) {
-    console.warn(`Geocoding failed for "${label}":`, error);
-  }
+    map.fitBounds(L.latLngBounds(pins.map(p => [p.lat, p.lng] as [number, number])).pad(0.3));
+  }, [pins, map]);
   return null;
 }
 
-export function MapPage() {
-  const [rawParticipants, setRawParticipants] = useState<Participant[]>([]);
-  const [mappedParticipants, setMappedParticipants] = useState<Participant[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [geocodingInProgress, setGeocodingInProgress] = useState(false);
+export function MapPage({ user }: { user: FirebaseUser | null }) {
+  const [myLobbies, setMyLobbies] = useState<Lobby[]>([]);
+  const [lobbiesLoading, setLobbiesLoading] = useState(true);
+  const [lobbiesError, setLobbiesError] = useState<string | null>(null);
+  const [ownPosition, setOwnPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoDenied, setGeoDenied] = useState(false);
+  const [locationsByLobby, setLocationsByLobby] = useState<Record<string, LobbyLocation[]>>({});
+  const [membersByLobby, setMembersByLobby] = useState<Record<string, LobbyMember[]>>({});
+  const [now, setNow] = useState(() => Date.now());
 
-  // Fetch participants
+  // Re-evaluates which lobbies are live as events start and finish.
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'participants'), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Participant[];
-      setTotalCount(data.length);
-      setRawParticipants(data);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'participants');
-    });
-    return () => unsubscribe();
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
   }, []);
 
-  // Geocode participants who only have a city label and no coordinates yet
   useEffect(() => {
-    const alreadyGeocoded = rawParticipants.filter(p =>
-      (typeof p.currentLocation?.lat === 'number' && typeof p.currentLocation?.lng === 'number') ||
-      (typeof p.location?.lat === 'number' && typeof p.location?.lng === 'number')
-    );
-    setMappedParticipants(alreadyGeocoded);
+    if (!user) {
+      setMyLobbies([]);
+      setLobbiesLoading(false);
+      setLobbiesError(null);
+      return;
+    }
+    let active = true;
+    setLobbiesLoading(true);
+    getMyLobbies(user.uid)
+      .then((lobbies) => {
+        if (!active) return;
+        setMyLobbies(lobbies);
+        setLobbiesError(null);
+      })
+      .catch((err) => {
+        console.error('Could not load your lobbies:', err);
+        if (active) setLobbiesError('We could not load your lobbies just now.');
+      })
+      .finally(() => { if (active) setLobbiesLoading(false); });
+    return () => { active = false; };
+  }, [user]);
 
-    const unGeocoded = rawParticipants.filter(p =>
-      !p.currentLocation && p.location?.label &&
-      (typeof p.location?.lat !== 'number' || typeof p.location?.lng !== 'number')
-    );
+  const liveLobbies = useMemo(
+    () => myLobbies.filter(l => isLobbyLive(l, now)),
+    [myLobbies, now]
+  );
+  const liveLobbyIds = useMemo(() => liveLobbies.map(l => l.id).join(','), [liveLobbies]);
 
-    if (unGeocoded.length === 0) return;
+  // Own position comes straight from the device, so it is available before an
+  // event starts — when nothing is being shared with (or by) anyone yet.
+  useEffect(() => {
+    if (!user || !('geolocation' in navigator)) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        setGeoDenied(false);
+        setOwnPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) setGeoDenied(true);
+      },
+      { enableHighAccuracy: true, maximumAge: 30_000, timeout: 30_000 }
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [user]);
+
+  // Live co-player positions + the roster needed to label them.
+  useEffect(() => {
+    if (liveLobbies.length === 0) {
+      setLocationsByLobby({});
+      setMembersByLobby({});
+      return;
+    }
+
+    const unsubs = liveLobbies.map(lobby =>
+      subscribeToLobbyLocations(
+        lobby.id,
+        (locations) => setLocationsByLobby(prev => ({ ...prev, [lobby.id]: locations })),
+        (err) => console.warn(`Could not read locations for lobby ${lobby.id}:`, err)
+      )
+    );
 
     let active = true;
-    const run = async () => {
-      setGeocodingInProgress(true);
-      const newlyGeocoded: Participant[] = [];
+    Promise.all(liveLobbies.map(async (lobby) => {
+      const snap = await getDocs(collection(db, 'lobbies', lobby.id, 'members'));
+      return [lobby.id, snap.docs.map(d => ({ id: d.id, ...d.data() } as LobbyMember))] as const;
+    }))
+      .then((entries) => { if (active) setMembersByLobby(Object.fromEntries(entries)); })
+      .catch((err) => console.warn('Could not load lobby rosters:', err));
 
-      for (const p of unGeocoded) {
-        if (!active) break;
-        if (!p.location?.label) continue;
+    return () => {
+      active = false;
+      unsubs.forEach(unsub => unsub());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveLobbyIds]);
 
-        // Nominatim's usage policy caps public requests at ~1/sec — stay comfortably under that
-        await new Promise(resolve => setTimeout(resolve, 1000));
+  const isInAnyLobby = myLobbies.length > 0;
+  const isEventLive = liveLobbies.length > 0;
 
-        const coords = await geocodeLabel(p.location.label);
-        if (coords) {
-          newlyGeocoded.push({
-            ...p,
-            location: { ...coords, label: p.location.label }
+  const pins = useMemo<PlayerPin[]>(() => {
+    if (!user) return [];
+
+    const byUser = new Map<string, PlayerPin>();
+
+    if (isEventLive) {
+      for (const lobby of liveLobbies) {
+        const roster = membersByLobby[lobby.id] || [];
+        for (const location of locationsByLobby[lobby.id] || []) {
+          const member = roster.find(m => m.id === location.userId);
+          byUser.set(location.userId, {
+            id: location.userId,
+            name: member?.name || 'Player',
+            avatarUrl: member?.avatarUrl || undefined,
+            golfClub: member?.golfClub,
+            lat: location.lat,
+            lng: location.lng,
+            updatedAt: location.updatedAt,
+            isSelf: location.userId === user.uid,
           });
         }
       }
-
-      if (active && newlyGeocoded.length > 0) {
-        setMappedParticipants(prev => {
-          const existingIds = new Set(prev.map(p => p.id));
-          return [...prev, ...newlyGeocoded.filter(p => !existingIds.has(p.id))];
-        });
-      }
-      setGeocodingInProgress(false);
-    };
-
-    run();
-    return () => { active = false; };
-  }, [rawParticipants]);
-
-  const resolvePosition = (p: Participant) => {
-    if (p.currentLocation && typeof p.currentLocation.lat === 'number' && typeof p.currentLocation.lng === 'number') {
-      return { ...p.currentLocation, isLive: true };
     }
-    if (typeof p.location?.lat === 'number' && typeof p.location?.lng === 'number') {
-      return { ...p.location, isLive: false };
+
+    // Always prefer the device's own reading for yourself — it is fresher than
+    // the rounded copy shared with the lobby, and it exists pre-event too.
+    if (ownPosition) {
+      const ownMember = Object.values(membersByLobby)
+        .flat()
+        .find(m => m.id === user.uid);
+      byUser.set(user.uid, {
+        id: user.uid,
+        name: 'You',
+        avatarUrl: ownMember?.avatarUrl || undefined,
+        lat: ownPosition.lat,
+        lng: ownPosition.lng,
+        isSelf: true,
+      });
     }
-    return null;
-  };
+
+    return Array.from(byUser.values());
+  }, [user, isEventLive, liveLobbies, locationsByLobby, membersByLobby, ownPosition]);
+
+  const otherPlayerCount = pins.filter(p => !p.isSelf).length;
+  const showPins = isInAnyLobby && pins.length > 0;
+  const dimMap = !isInAnyLobby;
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto px-4 py-12">
       <div className="text-center space-y-2">
-        <h1 className="text-5xl font-black text-slate-900 tracking-tight">GLOBAL <span className="text-emerald-600">REACH</span></h1>
-        <p className="text-slate-500 font-medium text-lg">See where our charitable golfers are right now — live from across the world.</p>
+        <h1 className="text-5xl font-black text-slate-900 tracking-tight">PLAYER <span className="text-emerald-600">MAP</span></h1>
+        <p className="text-slate-500 font-medium text-lg">
+          {isEventLive
+            ? 'Your lobby is live — here is where everyone is playing right now.'
+            : 'Live positions are shared inside your lobby while its event is running.'}
+        </p>
       </div>
 
-      <div className="h-[600px] rounded-[3rem] overflow-hidden border-8 border-white shadow-2xl relative bg-slate-100">
-        <MapContainer
-          center={[30, 0]}
-          zoom={2.5}
-          style={{ width: '100%', height: '100%' }}
-          scrollWheelZoom={true}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          {mappedParticipants.map(p => {
-            const pos = resolvePosition(p);
-            if (!pos) return null;
-            return (
-              <Marker key={p.id} position={[pos.lat, pos.lng]} icon={createPinIcon(!!pos.isLive)}>
-                <Popup minWidth={200}>
-                  <div className="p-1 space-y-3 font-sans">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
-                        <User size={20} />
-                      </div>
-                      <div>
-                        <div className="font-black text-slate-800">{p.name}</div>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{pos.label || p.location?.label}</div>
-                      </div>
-                    </div>
-                    {pos.isLive && (
-                      <>
-                        <div className="flex items-center gap-1 text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 uppercase tracking-widest w-fit">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          Live GPS
-                        </div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          Updated {formatLastUpdated((p.currentLocation as any)?.updatedAt)}
-                        </div>
-                      </>
+      <div className="h-[600px] rounded-[3rem] overflow-hidden border-8 border-white shadow-2xl relative bg-slate-900">
+        <div className={dimMap ? 'w-full h-full [&_.leaflet-tile-pane]:brightness-[0.35] [&_.leaflet-tile-pane]:grayscale' : 'w-full h-full'}>
+          <MapContainer
+            center={[30, 0]}
+            zoom={2.5}
+            style={{ width: '100%', height: '100%' }}
+            scrollWheelZoom={!dimMap}
+            dragging={!dimMap}
+            zoomControl={!dimMap}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            {showPins && <MapFocus pins={pins} />}
+            {showPins && pins.map(pin => (
+              <Marker key={pin.id} position={[pin.lat, pin.lng]} icon={createAvatarIcon(pin)}>
+                <Popup minWidth={180}>
+                  <div className="p-1 space-y-2 font-sans">
+                    <div className="font-black text-slate-800">{pin.isSelf ? 'You' : pin.name}</div>
+                    {pin.golfClub && (
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{pin.golfClub}</div>
                     )}
-                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-600 uppercase">
-                        <Flag size={12} />
-                        Home Club
-                      </div>
-                      <div className="font-bold text-slate-700">{p.golfClub}</div>
-                    </div>
-                    {p.score && (
-                      <div className="flex items-center justify-between bg-emerald-50 p-2 rounded-lg border border-emerald-100">
-                        <span className="text-xs font-black text-emerald-700 uppercase">Live Points</span>
-                        <span className="text-lg font-black text-emerald-900">{p.score}</span>
+                    {pin.updatedAt && !pin.isSelf && (
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        Updated {formatLastUpdated(pin.updatedAt)}
                       </div>
                     )}
                   </div>
                 </Popup>
               </Marker>
-            );
-          })}
-        </MapContainer>
+            ))}
+          </MapContainer>
+        </div>
 
-        {mappedParticipants.length === 0 && !loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-slate-900/10 backdrop-blur-[2px] pointer-events-none z-[1000]">
-            <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-sm space-y-3 pointer-events-auto">
-              <MapPin size={40} className="mx-auto text-emerald-500" />
-              <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter">
-                {totalCount > 0 ? 'Loading Coordinates...' : 'No Active Pins'}
+        {/* Not in a lobby — nothing to show at all. */}
+        {!lobbiesLoading && !isInAnyLobby && (
+          <div className="absolute inset-0 z-[1000] flex items-center justify-center bg-slate-900/70 backdrop-blur-[2px] p-6">
+            <div className="text-center max-w-sm space-y-4">
+              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mx-auto text-white">
+                <Lock size={28} />
+              </div>
+              <h3 className="text-2xl font-black text-white tracking-tight">
+                {lobbiesError || 'You need to join a lobby to see other players locations'}
               </h3>
-              <p className="text-slate-500 text-sm font-medium leading-relaxed">
-                {totalCount > 0
-                  ? `We have ${totalCount} registered players! Live GPS pins appear as players open the app during the tournament.`
-                  : 'Be the first to put yourself on the map! Register and update your profile location to see your pin here.'}
+              <p className="text-slate-300 font-medium text-sm">
+                Positions are only shared between members of the same lobby, while its event is running.
               </p>
-              {geocodingInProgress && (
-                <div className="flex items-center justify-center gap-2 text-xs font-bold text-slate-400">
-                  <RefreshCw size={14} className="animate-spin" />
-                  Geocoding in progress...
-                </div>
-              )}
+              <Link
+                to="/lobbies"
+                className="inline-flex items-center gap-2 bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-sm hover:bg-emerald-400 transition-colors"
+              >
+                <Users size={16} />
+                BROWSE LOBBIES
+              </Link>
             </div>
+          </div>
+        )}
+
+        {/* Live badge */}
+        {isEventLive && (
+          <div className="absolute top-5 left-5 z-[1000] flex items-center gap-2 bg-emerald-500 text-white px-4 py-2 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg">
+            <Radio size={14} className="animate-pulse" />
+            Event Live
           </div>
         )}
       </div>
 
-      <div className="bg-emerald-900 rounded-3xl p-8 text-white grid grid-cols-1 md:grid-cols-4 gap-8 shadow-2xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-800 rounded-full blur-3xl -mr-32 -mt-32 opacity-50" />
-        <div className="text-center space-y-1 relative z-10">
-          <div className="text-4xl font-black">{totalCount}</div>
-          <div className="text-xs font-bold uppercase tracking-widest text-emerald-400">Registered Golfers</div>
+      {/* In a lobby, waiting for the event to start. */}
+      {isInAnyLobby && !isEventLive && (
+        <div className="bg-amber-50 border-2 border-amber-100 rounded-3xl p-6 flex items-start gap-4">
+          <div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+            <Clock size={20} />
+          </div>
+          <div className="space-y-1">
+            <p className="font-black text-amber-900">
+              Other player position is going to be shown during an event
+            </p>
+            <p className="text-sm text-amber-700 font-medium">
+              {geoDenied
+                ? 'Allow location access in your browser to see your own pin here.'
+                : ownPosition
+                  ? 'Right now the map only shows your own position.'
+                  : 'Finding your position...'}
+            </p>
+          </div>
         </div>
-        <div className="text-center space-y-1 relative z-10">
-          <div className="text-4xl font-black">{mappedParticipants.length}</div>
-          <div className="text-xs font-bold uppercase tracking-widest text-emerald-400">Map Pins</div>
+      )}
+
+      {isEventLive && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <StatCard icon={Users} label="Players Sharing" value={String(otherPlayerCount + (ownPosition ? 1 : 0))} tone="emerald" />
+          <StatCard icon={Radio} label="Live Lobbies" value={String(liveLobbies.length)} tone="blue" />
+          <StatCard icon={Navigation} label="Your Position" value={ownPosition ? 'Sharing' : geoDenied ? 'Blocked' : 'Locating'} tone="amber" />
         </div>
-        <div className="text-center space-y-1 relative z-10">
-          <div className="text-4xl font-black">2.4k</div>
-          <div className="text-xs font-bold uppercase tracking-widest text-emerald-400">Miles Driven</div>
-        </div>
-        <div className="text-center space-y-1 relative z-10">
-          <div className="text-4xl font-black">£20.2k</div>
-          <div className="text-xs font-bold uppercase tracking-widest text-emerald-400">Raised Globally</div>
-        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, tone }: {
+  icon: any; label: string; value: string; tone: 'emerald' | 'blue' | 'amber';
+}) {
+  const tones = {
+    emerald: 'bg-emerald-50 text-emerald-600',
+    blue: 'bg-blue-50 text-blue-600',
+    amber: 'bg-amber-50 text-amber-600',
+  };
+  return (
+    <div className="bg-white rounded-3xl border-2 border-slate-100 shadow-sm p-6 flex items-center gap-4">
+      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${tones[tone]}`}>
+        <Icon size={22} />
+      </div>
+      <div>
+        <div className="text-2xl font-black text-slate-900">{value}</div>
+        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</div>
       </div>
     </div>
   );

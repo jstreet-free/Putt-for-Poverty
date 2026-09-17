@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { Participant, Sponsor } from '../types';
 import {
   Users, Trophy, MapPin, Plus, Trash2, Edit2, ShieldCheck, CreditCard, Layout, ArrowRight,
-  Activity, Megaphone, AlertTriangle, LayoutGrid, Calendar,
+  Activity, Megaphone, AlertTriangle, LayoutGrid, Calendar, PlayCircle, Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link } from 'react-router-dom';
@@ -34,6 +34,8 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
   const [loading, setLoading] = useState(true);
   const [showSponsorModal, setShowSponsorModal] = useState(false);
   const [editingSponsor, setEditingSponsor] = useState<Partial<Sponsor> | null>(null);
+  const [processingLobbies, setProcessingLobbies] = useState(false);
+  const [lobbyProcessResult, setLobbyProcessResult] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubParts = onSnapshot(collection(db, 'participants'), (snap) => {
@@ -72,6 +74,29 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
       setEditingSponsor(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'sponsors');
+    }
+  };
+
+  const handleProcessDueLobbies = async () => {
+    setProcessingLobbies(true);
+    setLobbyProcessResult(null);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/charge-lobby-credits', {
+        method: 'POST',
+        headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLobbyProcessResult(`Charged ${data.chargedMembers} member(s) across ${data.chargedLobbies} lobby/lobbies (${data.skippedMembers} skipped).`);
+      } else {
+        setLobbyProcessResult(data.error || 'Failed to process lobbies.');
+      }
+    } catch (err) {
+      console.error(err);
+      setLobbyProcessResult('Failed to process lobbies.');
+    } finally {
+      setProcessingLobbies(false);
     }
   };
 
@@ -117,7 +142,36 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
             USER DIRECTORY
             <ArrowRight size={16} />
           </Link>
+          <Link
+            to="/lobbies"
+            className="bg-white text-slate-700 px-5 py-3 rounded-3xl font-black text-sm hover:bg-slate-100 transition-all shadow-sm border border-slate-100 flex items-center gap-2"
+          >
+            <Users size={18} className="text-emerald-500" />
+            MANAGE LOBBIES
+            <ArrowRight size={16} />
+          </Link>
         </div>
+      </div>
+
+      <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h3 className="font-black text-slate-800 text-sm uppercase tracking-tight flex items-center gap-2">
+            <PlayCircle size={16} className="text-blue-500" />
+            Lobby Credit Charging
+          </h3>
+          <p className="text-xs text-slate-400 font-medium mt-1">
+            Runs automatically on a schedule, but you can trigger it manually to charge any lobby whose event date has already arrived.
+          </p>
+          {lobbyProcessResult && <p className="text-xs font-bold text-blue-600 mt-1">{lobbyProcessResult}</p>}
+        </div>
+        <button
+          onClick={handleProcessDueLobbies}
+          disabled={processingLobbies}
+          className="shrink-0 flex items-center justify-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase hover:bg-blue-700 transition-colors disabled:opacity-50"
+        >
+          {processingLobbies ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
+          {processingLobbies ? 'Processing...' : 'Process Due Lobbies Now'}
+        </button>
       </div>
 
       {/* Tab bar */}

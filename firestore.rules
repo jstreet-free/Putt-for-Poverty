@@ -7,6 +7,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // --- Helpers ---
     function isSignedIn() { return request.auth != null; }
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
@@ -36,15 +41,30 @@ service cloud.firestore {
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
       allow create: if isOwner(userId);
-      // Owners can edit their own profile, but cannot self-promote by
-      // writing role/status directly — only admins can change those.
+    
       allow update: if isAdmin() ||
-                     (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status']));
+                    (isOwner(userId) &&
+                     !incoming().diff(existing()).affectedKeys().hasAny(['role', 'status']));
+    
+      allow delete: if isAdmin();
+
       match /private/info {
         allow get: if isOwner(userId) || isAdmin();
         allow create, update: if isOwner(userId) &&
                                incoming().email is string &&
                                incoming().email.size() < 256;
+      }
+
+      // Index of the lobbies this user belongs to, so "my lobbies" is a plain
+      // owner-scoped list — no collection-group index, and no get() calls that
+      // would burn the 10-document-access budget a query is allowed.
+      // A lobby's creator (or an admin) can delete an entry when kicking.
+      match /lobbyMemberships/{lobbyId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId);
+        allow delete: if isOwner(userId) ||
+                      isAdmin() ||
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
       }
     }
 
@@ -63,8 +83,16 @@ service cloud.firestore {
 
       allow update: if isAdmin() || (isOwner(userId) &&
                      isValidParticipant(incoming()) && (
-                       (incoming().diff(existing()).affectedKeys().hasOnly(['location', 'currentLocation', 'updatedAt', 'name', 'golfClub', 'course', 'handicap'])) ||
-                       (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']))
+                       (incoming().diff(existing()).affectedKeys().hasOnly([
+                         'location', 'updatedAt', 'name', 'golfClub', 'course', 'handicap',
+                         'email', 'emailLower', 'membershipProofUrl', 'membershipProofFileName',
+                         'membershipProofUploadedAt', 'avatarUrl'
+                       ])) ||
+                       (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']) &&
+                        incoming().score is number && incoming().score >= 0 && incoming().score <= 100 &&
+                        incoming().usedRounds is number &&
+                        incoming().usedRounds == existing().get('usedRounds', 0) + 1 &&
+                        incoming().usedRounds <= existing().get('paidRounds', 0))
                      ));
 
       allow delete: if isAdmin();
@@ -124,6 +152,111 @@ service cloud.firestore {
     // --- Warnings / moderation log (Warnings & Alerts tab) ---
     match /warnings/{id} {
       allow write: if isAdmin();
+    }
+
+    // --- Lobbies (scheduled meetups; credits are charged separately by a
+    // trusted server job once a lobby's eventDate arrives) ---
+    function hasAvailableCredit(uid) {
+      return exists(/databases/$(database)/documents/participants/$(uid)) &&
+             get(/databases/$(database)/documents/participants/$(uid)).data.get('paidRounds', 0) >
+             get(/databases/$(database)/documents/participants/$(uid)).data.get('usedRounds', 0);
+    }
+
+    function lobbyData(lobbyId) {
+      return get(/databases/$(database)/documents/lobbies/$(lobbyId)).data;
+    }
+
+    function isLobbyMember(lobbyId, uid) {
+      return exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(uid));
+    }
+
+    // A lobby's event runs for 8 hours from its scheduled start. Live GPS is
+    // only shared inside that window — see the locations subcollection below.
+    function lobbyEventIsLive(lobbyId) {
+      return lobbyData(lobbyId).eventDate <= request.time &&
+             request.time < lobbyData(lobbyId).eventDate + duration.value(8, 'h');
+    }
+
+    match /lobbies/{lobbyId} {
+      // Every lobby is publicly listed/visible — closed lobbies just can't be
+      // joined without the share code, which lives in the restricted
+      // secret/join subdocument below, never on this document.
+      allow read: if true;
+
+      allow create: if isSignedIn() &&
+                    incoming().creatorId == request.auth.uid &&
+                    incoming().creatorName is string && incoming().creatorName.size() > 0 &&
+                    incoming().name is string && incoming().name.size() > 0 && incoming().name.size() < 100 &&
+                    incoming().isClosed is bool &&
+                    incoming().eventDate is timestamp && incoming().eventDate > request.time &&
+                    incoming().status == 'scheduled' &&
+                    hasAvailableCredit(request.auth.uid);
+
+      allow update: if isAdmin() ||
+                    (isSignedIn() && existing().creatorId == request.auth.uid &&
+                     existing().status == 'scheduled' &&
+                     incoming().diff(existing()).affectedKeys().hasOnly(['name', 'isClosed', 'eventDate', 'updatedAt']) &&
+                     incoming().name is string && incoming().name.size() > 0 && incoming().name.size() < 100 &&
+                     incoming().isClosed is bool &&
+                     incoming().eventDate is timestamp && incoming().eventDate > request.time);
+
+      allow delete: if isAdmin() ||
+                    (isSignedIn() && existing().creatorId == request.auth.uid && existing().status == 'scheduled');
+
+      // Holds the invite code for closed lobbies. Only the creator/admin can
+      // ever read it back (e.g. to redisplay it for copying) — it is never
+      // included on the publicly-readable lobby document above.
+      match /secret/join {
+        allow create: if isSignedIn() &&
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid &&
+                      incoming().code is string && incoming().code.size() >= 4 && incoming().code.size() <= 20;
+        allow get: if isSignedIn() &&
+                   (get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid || isAdmin());
+      }
+
+      match /members/{memberId} {
+        // Open-lobby rosters (and member counts) are visible to anyone,
+        // signed in or not — matching the lobby doc's own public read rule.
+        // Closed-lobby rosters are restricted to people already inside (or
+        // the creator/admin), so an invite code, once used, only ever
+        // reaches people who already had it.
+        allow read: if !get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
+                    (isSignedIn() &&
+                     (isAdmin() ||
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid ||
+                      exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(request.auth.uid))));
+
+        allow create: if isOwner(memberId) &&
+                      incoming().userId == memberId &&
+                      incoming().name is string && incoming().name.size() > 0 &&
+                      hasAvailableCredit(memberId) &&
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.status == 'scheduled' &&
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.eventDate > request.time &&
+                      (!get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
+                       memberId == get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId ||
+                       incoming().enteredCode == get(/databases/$(database)/documents/lobbies/$(lobbyId)/secret/join).data.code);
+
+        allow delete: if isOwner(memberId) ||
+                      isAdmin() ||
+                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
+
+        allow update: if false;
+      }
+
+      // Live GPS during a lobby's event. Readable only by that lobby's own
+      // members, and only while the event is actually running — outside the
+      // window there is nothing to read and nothing may be written.
+      match /locations/{userId} {
+        allow read: if isSignedIn() &&
+                    isLobbyMember(lobbyId, request.auth.uid) &&
+                    lobbyEventIsLive(lobbyId);
+
+        allow write: if isOwner(userId) &&
+                     isLobbyMember(lobbyId, userId) &&
+                     lobbyEventIsLive(lobbyId) &&
+                     incoming().lat is number &&
+                     incoming().lng is number;
+      }
     }
   }
 }

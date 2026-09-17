@@ -92,7 +92,11 @@ export function Leaderboard({ user }: { user: FirebaseUser | null }) {
                 </div>
                 <div className="flex items-center gap-4">
                    <div className="w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center overflow-hidden">
-                      <User className="text-slate-400" size={24} />
+                      {player.avatarUrl ? (
+                        <img src={player.avatarUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <User className="text-slate-400" size={24} />
+                      )}
                    </div>
                    <div className="flex flex-col">
                       <span className="font-black text-slate-800 text-lg group-hover:text-emerald-700 transition-colors">{player.name}</span>

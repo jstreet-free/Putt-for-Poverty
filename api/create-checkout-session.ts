@@ -1,16 +1,20 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
 import Stripe from 'stripe';
+import { verifyCaller } from './_lib/auth';
 
 if (!getApps().length) {
   initializeApp({ projectId: firebaseConfig.projectId });
 }
-const db = getFirestore();
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const caller = await verifyCaller(req);
+  if (!caller) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -20,7 +24,8 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { userId, userEmail } = req.body;
+    const userId = caller.uid;
+    const userEmail = caller.email;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -43,7 +48,7 @@ export default async function handler(req: any, res: any) {
       metadata: {
         userId,
       },
-      customer_email: userEmail,
+      ...(userEmail ? { customer_email: userEmail } : {}),
     });
 
     res.status(200).json({ id: session.id });

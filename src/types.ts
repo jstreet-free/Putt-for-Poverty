@@ -10,16 +10,11 @@ export interface Participant {
   paidRounds: number;
   usedRounds: number;
   score?: number;
+  avatarUrl?: string;
   location?: {
     lat: number;
     lng: number;
     label: string;
-  };
-  currentLocation?: {
-    lat: number;
-    lng: number;
-    label: string;
-    updatedAt: string;
   };
   updatedAt: string;
 }
@@ -61,6 +56,7 @@ export interface AppUser {
   location?: { label?: string; lat?: number; lng?: number };
   membershipProofUrl?: string;
   membershipProofFileName?: string;
+  avatarUrl?: string;
   [key: string]: any;
 }
 
@@ -126,6 +122,39 @@ export interface AdminWarning {
   createdAt: string;
   createdBy?: string;
   resolved?: boolean;
+}
+
+export interface Lobby {
+  id: string;
+  name: string;
+  creatorId: string;
+  creatorName: string;
+  isClosed: boolean;
+  eventDate: any; // Firestore Timestamp
+  status: 'scheduled' | 'charged';
+  createdAt: any;
+  updatedAt?: any;
+  chargedAt?: string;
+}
+
+export interface LobbyMember {
+  id: string; // == userId
+  userId: string;
+  name: string;
+  golfClub?: string;
+  avatarUrl?: string;
+  joinedAt: any;
+  chargeStatus?: 'charged' | 'insufficient_credit' | 'no_participant_record';
+  chargedAt?: string;
+}
+
+// Live GPS shared inside a lobby, only while its event is running.
+export interface LobbyLocation {
+  id: string; // == userId
+  userId: string;
+  lat: number;
+  lng: number;
+  updatedAt: string;
 }
 
 export interface EventSettings {

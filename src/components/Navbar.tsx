@@ -1,6 +1,6 @@
 import { auth } from '../lib/firebase';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { LogIn, LogOut, Menu, X, Trophy, Map, ScrollText, UserCircle, Settings } from 'lucide-react';
+import { LogIn, LogOut, Menu, X, Trophy, Map, ScrollText, UserCircle, Settings, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -31,6 +31,7 @@ export function Navbar({ user, userDoc, participant }: { user: any, userDoc: any
 };
 
   const navItems = [
+    { name: 'Lobbies', path: '/lobbies', icon: Users },
     { name: 'Leaderboard', path: '/leaderboard', icon: Trophy },
     { name: 'Player Map', path: '/map', icon: Map },
     { name: 'The Rules', path: '/rules', icon: ScrollText },
@@ -82,7 +83,11 @@ export function Navbar({ user, userDoc, participant }: { user: any, userDoc: any
           {user ? (
             <div className="flex items-center gap-4">
               <Link to="/register" className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full text-sm font-bold border border-emerald-100 hover:bg-emerald-100 transition-colors">
-                <UserCircle size={18} />
+                {(userDoc?.avatarUrl || user.photoURL) ? (
+                  <img src={userDoc?.avatarUrl || user.photoURL} alt="" className="w-[18px] h-[18px] rounded-full object-cover" />
+                ) : (
+                  <UserCircle size={18} />
+                )}
                 Profile
               </Link>
               <button onClick={() => signOut(auth)} className="text-slate-400 hover:text-rose-500 transition-colors">

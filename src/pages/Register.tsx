@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
-import { doc, writeBatch, setDoc, getDoc } from 'firebase/firestore';
+import { doc, writeBatch, setDoc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../lib/firebase';
 import { loadStripe } from '@stripe/stripe-js';
-import { UserCircle, MapPin, Trophy, CreditCard, CheckCircle, Flag, Loader2, XCircle, ShieldCheck, Upload, FileCheck, ExternalLink } from 'lucide-react';
+import {
+  UserCircle, MapPin, Trophy, CreditCard, CheckCircle, Flag, Loader2, XCircle, ShieldCheck,
+  Upload, FileCheck, ExternalLink, Camera, History, Users, Calendar,
+} from 'lucide-react';
 import { motion } from 'motion/react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PlaceAutocomplete } from '../components/PlaceAutocomplete';
+import { getMyLobbies } from '../lib/lobbyService';
+import { Lobby, ScoreEntry } from '../types';
 
 const stripePromise = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY 
   ? loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) 
@@ -24,7 +29,16 @@ export function Register({ user, participant }: { user: any, participant: any })
   const [membershipFile, setMembershipFile] = useState<File | null>(null);
   const [isUploadingMembership, setIsUploadingMembership] = useState(false);
   const [membershipStatus, setMembershipStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  
+
+  const [userDocData, setUserDocData] = useState<any>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [avatarStatus, setAvatarStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  const [myLobbies, setMyLobbies] = useState<Lobby[]>([]);
+  const [myScores, setMyScores] = useState<ScoreEntry[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [lobbiesError, setLobbiesError] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     name: user?.displayName || '',
     golfClub: '',
@@ -61,14 +75,54 @@ export function Register({ user, participant }: { user: any, participant: any })
   }, [user]);
 
   useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+      setUserDocData(snap.exists() ? snap.data() : null);
+    });
+    return () => unsub();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    setActivityLoading(true);
+
+    const scoresQuery = query(
+      collection(db, 'scores'),
+      where('participantId', '==', user.uid),
+      orderBy('submittedAt', 'desc'),
+      limit(20)
+    );
+    const unsubScores = onSnapshot(scoresQuery, (snap) => {
+      setMyScores(snap.docs.map(d => ({ id: d.id, ...d.data() } as ScoreEntry)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'scores'));
+
+    getMyLobbies(user.uid)
+      .then((lobbies) => {
+        setMyLobbies(lobbies);
+        setLobbiesError(null);
+      })
+      .catch((err) => {
+        console.error('Failed to load lobbies:', err);
+        setLobbiesError('We could not load your lobbies just now.');
+      })
+      .finally(() => setActivityLoading(false));
+
+    return () => unsubScores();
+  }, [user]);
+
+  useEffect(() => {
     const checkPayment = async () => {
       const sessionId = searchParams.get('session_id');
       if (searchParams.get('success') === 'true' && sessionId && !isVerifying) {
         setIsVerifying(true);
         try {
+          const idToken = await user?.getIdToken();
           const res = await fetch('/api/verify-payment', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+            },
             body: JSON.stringify({ sessionId })
           });
           if (res.ok) {
@@ -170,13 +224,14 @@ export function Register({ user, participant }: { user: any, participant: any })
 
       await batch.commit();
 
+      const idToken = await user.getIdToken();
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          userEmail: user.email,
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({}),
       });
 
       const session = await response.json();
@@ -277,6 +332,33 @@ export function Register({ user, participant }: { user: any, participant: any })
     }
   };
 
+  const handleUploadAvatar = async (file: File) => {
+    if (!user) return;
+    setIsUploadingAvatar(true);
+    setAvatarStatus('idle');
+    try {
+      const fileRef = ref(storage, `avatars/${user.uid}/${file.name}`);
+      await uploadBytes(fileRef, file);
+      const url = await getDownloadURL(fileRef);
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', user.uid), { avatarUrl: url, updatedAt: new Date().toISOString() }, { merge: true });
+      if (participant) {
+        batch.set(doc(db, 'participants', user.uid), { avatarUrl: url, updatedAt: new Date().toISOString() }, { merge: true });
+      }
+      await batch.commit();
+
+      setAvatarStatus('success');
+      setTimeout(() => setAvatarStatus('idle'), 3000);
+    } catch (error) {
+      console.error('Avatar upload failed:', error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      setAvatarStatus('error');
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   return (
@@ -284,9 +366,35 @@ export function Register({ user, participant }: { user: any, participant: any })
       <div className="flex flex-col md:flex-row gap-8 items-start">
         {/* Profile Form */}
         <div className="flex-1 space-y-8">
-          <div className="space-y-2">
-            <h1 className="text-4xl font-black text-slate-800 tracking-tight">PLAYER <span className="text-emerald-600">PROFILE</span></h1>
-            <p className="text-slate-500 font-medium">Keep your details updated for the leaderboard.</p>
+          <div className="flex items-center gap-5">
+            <div className="relative shrink-0">
+              <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-100 border-4 border-white shadow-lg flex items-center justify-center">
+                {(userDocData?.avatarUrl || user?.photoURL) ? (
+                  <img src={userDocData?.avatarUrl || user.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <UserCircle size={40} className="text-slate-300" />
+                )}
+              </div>
+              <label className="absolute -bottom-1 -right-1 w-8 h-8 bg-emerald-600 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-md border-2 border-white">
+                {isUploadingAvatar ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={isUploadingAvatar}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUploadAvatar(file);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+            <div className="space-y-1">
+              <h1 className="text-4xl font-black text-slate-800 tracking-tight">PLAYER <span className="text-emerald-600">PROFILE</span></h1>
+              <p className="text-slate-500 font-medium">Keep your details updated for the leaderboard.</p>
+              {avatarStatus === 'error' && <p className="text-xs text-rose-600 font-bold">Photo upload failed — please try again.</p>}
+            </div>
           </div>
 
           <form onSubmit={handleSaveProfile} className="bg-white p-8 rounded-[2rem] border-2 border-slate-100 shadow-xl space-y-6">
@@ -583,6 +691,104 @@ export function Register({ user, participant }: { user: any, participant: any })
             </ul>
           </div>
         </div>
+      </div>
+
+      {user && (
+        <MyActivity
+          lobbies={myLobbies}
+          scores={myScores}
+          loading={activityLoading}
+          lobbiesError={lobbiesError}
+        />
+      )}
+    </div>
+  );
+}
+
+function formatLobbyDate(value: any): string {
+  const d = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+  if (!d || isNaN(d.getTime())) return 'Unknown date';
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatScoreDate(value: any): string {
+  const d = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+  if (!d || isNaN(d.getTime())) return 'Unknown date';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function MyActivity({ lobbies, scores, loading, lobbiesError }: {
+  lobbies: Lobby[];
+  scores: ScoreEntry[];
+  loading: boolean;
+  lobbiesError: string | null;
+}) {
+  const navigate = useNavigate();
+
+  return (
+    <div className="bg-white rounded-[2rem] border-2 border-slate-100 shadow-xl p-8 space-y-8">
+      <div className="flex items-center gap-2">
+        <History className="text-blue-500" size={22} />
+        <h2 className="text-2xl font-black text-slate-800 tracking-tight">MY ACTIVITY</h2>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+          <Users size={14} />
+          Lobbies You're In
+        </h3>
+        {loading ? (
+          <div className="text-center py-6 text-slate-400"><Loader2 className="animate-spin mx-auto" size={20} /></div>
+        ) : lobbiesError ? (
+          <p className="text-sm text-rose-600 font-bold">{lobbiesError}</p>
+        ) : lobbies.length === 0 ? (
+          <p className="text-sm text-slate-400 font-medium">You haven't joined or created any lobbies yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {lobbies.map((l) => (
+              <button
+                key={l.id}
+                onClick={() => navigate(`/lobbies?lobby=${l.id}`)}
+                className="w-full flex items-center justify-between gap-3 bg-slate-50 hover:bg-slate-100 p-4 rounded-2xl border border-slate-100 transition-colors text-left"
+              >
+                <div className="min-w-0 flex items-center gap-2">
+                  <Calendar size={14} className="text-slate-400 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-800 text-sm truncate">{l.name}</div>
+                    <div className="text-xs text-slate-400 font-medium">{formatLobbyDate(l.eventDate)}</div>
+                  </div>
+                </div>
+                <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
+                  l.status === 'charged' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
+                }`}>
+                  {l.status === 'charged' ? 'Started' : 'Scheduled'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-4 pt-6 border-t border-slate-100">
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+          <Trophy size={14} />
+          Match History
+        </h3>
+        {scores.length === 0 ? (
+          <p className="text-sm text-slate-400 font-medium">No rounds submitted yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {scores.map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-800 text-sm truncate">{s.golfClub}</div>
+                  <div className="text-xs text-slate-400 font-medium">{formatScoreDate(s.submittedAt)}</div>
+                </div>
+                <span className="text-xl font-black text-emerald-600 shrink-0">{s.points} pts</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

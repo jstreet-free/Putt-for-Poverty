@@ -8,6 +8,7 @@ import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
 import { Register } from './pages/Register';
 import { Leaderboard } from './pages/Leaderboard';
+import { Lobbies } from './pages/Lobbies';
 import { MapPage } from './pages/MapPage';
 import { Rules } from './pages/Rules';
 import { ScoreUpload } from './pages/ScoreUpload';
@@ -94,14 +95,18 @@ export default function App() {
   }
 
   const content = (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
       <Navbar user={user} userDoc={userDoc} participant={participant} />
-      <main className="pt-16 pb-20 px-4 md:px-0">
+      <main className="flex-1 pt-16 pb-20 px-4 md:px-0">
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<Home participant={participant} />} />
             <Route path="/leaderboard" element={<Leaderboard user={user} />} />
-            <Route path="/map" element={<MapPage />} />
+            <Route path="/map" element={<MapPage user={user} />} />
+            <Route
+              path="/lobbies"
+              element={<Lobbies user={user} participant={participant} isAdmin={!!user && (userDoc?.role === 'admin' || user.email === 'admin@gmail.com')} />}
+            />
             <Route path="/rules" element={<Rules />} />
             <Route 
               path="/register" 
