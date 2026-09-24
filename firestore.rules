@@ -58,13 +58,22 @@ service cloud.firestore {
       // Index of the lobbies this user belongs to, so "my lobbies" is a plain
       // owner-scoped list — no collection-group index, and no get() calls that
       // would burn the 10-document-access budget a query is allowed.
-      // A lobby's creator (or an admin) can delete an entry when kicking.
+      // Entries are only ever written by the server (create-lobby/join-lobby,
+      // via firebase-admin, which bypasses these rules) — clients may read
+      // their own and delete one when leaving or when a creator/admin kicks.
       match /lobbyMemberships/{lobbyId} {
         allow read: if isOwner(userId) || isAdmin();
-        allow create, update: if isOwner(userId);
+        allow create, update: if false;
         allow delete: if isOwner(userId) ||
                       isAdmin() ||
                       get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
+      }
+
+      // Final standings from a finished lobby this user took part in —
+      // written once by finishLobby() server-side, never by the client.
+      match /history/{lobbyId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false;
       }
     }
 
@@ -88,11 +97,8 @@ service cloud.firestore {
                          'email', 'emailLower', 'membershipProofUrl', 'membershipProofFileName',
                          'membershipProofUploadedAt', 'avatarUrl'
                        ])) ||
-                       (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt', 'usedRounds']) &&
-                        incoming().score is number && incoming().score >= 0 && incoming().score <= 100 &&
-                        incoming().usedRounds is number &&
-                        incoming().usedRounds == existing().get('usedRounds', 0) + 1 &&
-                        incoming().usedRounds <= existing().get('paidRounds', 0))
+                       (incoming().diff(existing()).affectedKeys().hasOnly(['score', 'updatedAt']) &&
+                        incoming().score is number && incoming().score >= 0 && incoming().score <= 100)
                      ));
 
       allow delete: if isAdmin();
@@ -154,14 +160,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // --- Lobbies (scheduled meetups; credits are charged separately by a
-    // trusted server job once a lobby's eventDate arrives) ---
-    function hasAvailableCredit(uid) {
-      return exists(/databases/$(database)/documents/participants/$(uid)) &&
-             get(/databases/$(database)/documents/participants/$(uid)).data.get('paidRounds', 0) >
-             get(/databases/$(database)/documents/participants/$(uid)).data.get('usedRounds', 0);
-    }
-
+    // --- Lobbies ---
+    // Every status transition (create, join, start — which charges credits,
+    // finish — which scores and archives, delete, maintenance) happens
+    // server-side via firebase-admin, which bypasses these rules entirely.
+    // Clients never create a lobby, a member, a scorecard result, or a
+    // history entry directly, and never touch status/startedAt/finishedAt/
+    // expiresAt/chargeStatus — only the server-side endpoints in /api do.
     function lobbyData(lobbyId) {
       return get(/databases/$(database)/documents/lobbies/$(lobbyId)).data;
     }
@@ -170,11 +175,13 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(uid));
     }
 
-    // A lobby's event runs for 8 hours from its scheduled start. Live GPS is
-    // only shared inside that window — see the locations subcollection below.
-    function lobbyEventIsLive(lobbyId) {
-      return lobbyData(lobbyId).eventDate <= request.time &&
-             request.time < lobbyData(lobbyId).eventDate + duration.value(8, 'h');
+    function isChargedMember(lobbyId, uid) {
+      return isLobbyMember(lobbyId, uid) &&
+             get(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(uid)).data.get('chargeStatus', '') == 'charged';
+    }
+
+    function lobbyIsLive(lobbyId) {
+      return lobbyData(lobbyId).status == 'live';
     }
 
     match /lobbies/{lobbyId} {
@@ -183,35 +190,39 @@ service cloud.firestore {
       // secret/join subdocument below, never on this document.
       allow read: if true;
 
-      allow create: if isSignedIn() &&
-                    incoming().creatorId == request.auth.uid &&
-                    incoming().creatorName is string && incoming().creatorName.size() > 0 &&
-                    incoming().name is string && incoming().name.size() > 0 && incoming().name.size() < 100 &&
-                    incoming().isClosed is bool &&
-                    incoming().eventDate is timestamp && incoming().eventDate > request.time &&
-                    incoming().status == 'scheduled' &&
-                    hasAvailableCredit(request.auth.uid);
+      // Creation charges nothing but still needs the credit/active-lobby
+      // checks that only the server can cheaply and atomically perform —
+      // use POST /api/create-lobby.
+      allow create: if false;
 
+      // The host can still edit a few harmless details before the event
+      // starts — this stays a direct client write. Everything that matters
+      // (status, credits, membership) goes through the server endpoints.
       allow update: if isAdmin() ||
                     (isSignedIn() && existing().creatorId == request.auth.uid &&
                      existing().status == 'scheduled' &&
-                     incoming().diff(existing()).affectedKeys().hasOnly(['name', 'isClosed', 'eventDate', 'updatedAt']) &&
+                     incoming().diff(existing()).affectedKeys().hasOnly(['name', 'isClosed', 'eventDate', 'expiresAt', 'updatedAt']) &&
                      incoming().name is string && incoming().name.size() > 0 && incoming().name.size() < 100 &&
                      incoming().isClosed is bool &&
-                     incoming().eventDate is timestamp && incoming().eventDate > request.time);
+                     incoming().eventDate is timestamp && incoming().eventDate > request.time &&
+                     incoming().expiresAt == incoming().eventDate + duration.value(12, 'h'));
 
-      allow delete: if isAdmin() ||
-                    (isSignedIn() && existing().creatorId == request.auth.uid && existing().status == 'scheduled');
+      // Deletion has to clean up the membership index on every member first —
+      // use POST /api/delete-lobby (creator while scheduled, or admin).
+      allow delete: if false;
 
       // Holds the invite code for closed lobbies. Only the creator/admin can
       // ever read it back (e.g. to redisplay it for copying) — it is never
-      // included on the publicly-readable lobby document above.
+      // included on the publicly-readable lobby document above. Creation
+      // stays a client write because switching an existing lobby to private
+      // (via the update rule above) needs to be able to mint a fresh code.
       match /secret/join {
         allow create: if isSignedIn() &&
-                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid &&
+                      lobbyData(lobbyId).creatorId == request.auth.uid &&
+                      lobbyData(lobbyId).status == 'scheduled' &&
                       incoming().code is string && incoming().code.size() >= 4 && incoming().code.size() <= 20;
         allow get: if isSignedIn() &&
-                   (get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid || isAdmin());
+                   (lobbyData(lobbyId).creatorId == request.auth.uid || isAdmin());
       }
 
       match /members/{memberId} {
@@ -220,42 +231,65 @@ service cloud.firestore {
         // Closed-lobby rosters are restricted to people already inside (or
         // the creator/admin), so an invite code, once used, only ever
         // reaches people who already had it.
-        allow read: if !get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
+        allow read: if !lobbyData(lobbyId).isClosed ||
                     (isSignedIn() &&
                      (isAdmin() ||
-                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid ||
+                      lobbyData(lobbyId).creatorId == request.auth.uid ||
                       exists(/databases/$(database)/documents/lobbies/$(lobbyId)/members/$(request.auth.uid))));
 
-        allow create: if isOwner(memberId) &&
-                      incoming().userId == memberId &&
-                      incoming().name is string && incoming().name.size() > 0 &&
-                      hasAvailableCredit(memberId) &&
-                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.status == 'scheduled' &&
-                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.eventDate > request.time &&
-                      (!get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.isClosed ||
-                       memberId == get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId ||
-                       incoming().enteredCode == get(/databases/$(database)/documents/lobbies/$(lobbyId)/secret/join).data.code);
-
-        allow delete: if isOwner(memberId) ||
-                      isAdmin() ||
-                      get(/databases/$(database)/documents/lobbies/$(lobbyId)).data.creatorId == request.auth.uid;
-
+        // Joining needs the same credit/active-lobby/code checks as create —
+        // use POST /api/join-lobby.
+        allow create: if false;
         allow update: if false;
+
+        // Leaving/kicking stays a direct client write, but only before the
+        // event starts — once it's live, membership (and who got charged)
+        // is locked in.
+        allow delete: if lobbyData(lobbyId).status == 'scheduled' &&
+                      (isOwner(memberId) ||
+                       isAdmin() ||
+                       lobbyData(lobbyId).creatorId == request.auth.uid);
       }
 
-      // Live GPS during a lobby's event. Readable only by that lobby's own
-      // members, and only while the event is actually running — outside the
-      // window there is nothing to read and nothing may be written.
+      // Live GPS during a lobby's event. Only charged members (not
+      // spectators) share or see it, and only while the event is live.
       match /locations/{userId} {
         allow read: if isSignedIn() &&
                     isLobbyMember(lobbyId, request.auth.uid) &&
-                    lobbyEventIsLive(lobbyId);
+                    lobbyIsLive(lobbyId);
 
         allow write: if isOwner(userId) &&
-                     isLobbyMember(lobbyId, userId) &&
-                     lobbyEventIsLive(lobbyId) &&
-                     incoming().lat is number &&
-                     incoming().lng is number;
+                     isChargedMember(lobbyId, userId) &&
+                     lobbyIsLive(lobbyId) &&
+                     incoming().lat is number && incoming().lat >= -90 && incoming().lat <= 90 &&
+                     incoming().lng is number && incoming().lng >= -180 && incoming().lng <= 180 &&
+                     incoming().updatedAt == request.time;
+      }
+
+      // Per-hole strokes during a live event. Only the charged player who
+      // owns the card can write it, and only while their lobby is live —
+      // spectators (no credit at Start) get a read-only view in the UI.
+      match /scorecards/{userId} {
+        allow read: if isSignedIn() &&
+                    (isLobbyMember(lobbyId, request.auth.uid) || isAdmin());
+
+        allow create, update: if isOwner(userId) &&
+                              isChargedMember(lobbyId, userId) &&
+                              lobbyIsLive(lobbyId) &&
+                              incoming().strokes is map &&
+                              incoming().strokes.size() <= lobbyData(lobbyId).holes &&
+                              incoming().total is number && incoming().total >= 0 && incoming().total <= 270 &&
+                              incoming().holesPlayed is number && incoming().holesPlayed >= 0 && incoming().holesPlayed <= 18 &&
+                              incoming().updatedAt == request.time;
+
+        allow delete: if false;
+      }
+
+      // Final standings, written once by finishLobby() on the server.
+      match /results/{docId} {
+        allow read: if isSignedIn() &&
+                    (isLobbyMember(lobbyId, request.auth.uid) || isAdmin());
+        allow write: if false;
       }
     }
   }
