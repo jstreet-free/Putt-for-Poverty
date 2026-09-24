@@ -40,3 +40,8 @@ if (!getApps().length) {
 // bare getFirestore() (that connects to "(default)", a different, unused
 // database — this exact bug shipped once already).
 export const db = getFirestore(firebaseConfig.firestoreDatabaseId);
+
+// Unlike the client SDK, the Admin SDK throws on `undefined` anywhere in a
+// document by default (e.g. an optional `avatarUrl` left unset) instead of
+// just omitting the field. Must be set before any other use of `db`.
+db.settings({ ignoreUndefinedProperties: true });
