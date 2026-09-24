@@ -124,6 +124,8 @@ export interface AdminWarning {
   resolved?: boolean;
 }
 
+export type LobbyStatus = 'scheduled' | 'live' | 'finished' | 'expired';
+
 export interface Lobby {
   id: string;
   name: string;
@@ -131,10 +133,13 @@ export interface Lobby {
   creatorName: string;
   isClosed: boolean;
   eventDate: any; // Firestore Timestamp
-  status: 'scheduled' | 'charged';
+  holes: 9 | 18;
+  status: LobbyStatus;
+  startedAt?: any;
+  finishedAt?: any;
+  expiresAt: any; // when it should be expired/finished if nobody acts
   createdAt: any;
   updatedAt?: any;
-  chargedAt?: string;
 }
 
 export interface LobbyMember {
@@ -145,7 +150,43 @@ export interface LobbyMember {
   avatarUrl?: string;
   joinedAt: any;
   chargeStatus?: 'charged' | 'insufficient_credit' | 'no_participant_record';
-  chargedAt?: string;
+  chargedAt?: any;
+}
+
+export interface Scorecard {
+  id: string; // == userId
+  userId: string;
+  name: string;
+  avatarUrl?: string;
+  strokes: Record<string, number>; // { "1": 4, "2": 5 }
+  total: number;
+  holesPlayed: number;
+  updatedAt: any;
+}
+
+export interface StandingRow {
+  userId: string;
+  name: string;
+  avatarUrl?: string;
+  total: number;
+  holesPlayed: number;
+  position: number;
+}
+
+export interface LobbyResult {
+  lobbyId: string;
+  lobbyName: string;
+  eventDate: any;
+  startedAt: any;
+  finishedAt: any;
+  holes: 9 | 18;
+  standings: StandingRow[];
+}
+
+export interface HistoryEntry extends LobbyResult {
+  myPosition: number | null;
+  myTotal: number | null;
+  playerCount: number;
 }
 
 // Live GPS shared inside a lobby, only while its event is running.
@@ -154,7 +195,7 @@ export interface LobbyLocation {
   userId: string;
   lat: number;
   lng: number;
-  updatedAt: string;
+  updatedAt: any;
 }
 
 export interface EventSettings {

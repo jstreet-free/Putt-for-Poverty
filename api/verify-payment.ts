@@ -1,13 +1,7 @@
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
+import { FieldValue } from 'firebase-admin/firestore';
 import Stripe from 'stripe';
 import { verifyCaller } from './_lib/auth';
-
-if (!getApps().length) {
-  initializeApp({ projectId: firebaseConfig.projectId });
-}
-const db = getFirestore();
+import { db } from './_lib/firebaseAdmin';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

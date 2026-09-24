@@ -3,11 +3,10 @@ import {
   collection, doc, deleteDoc, getDoc, getDocs, getCountFromServer,
   limit as fbLimit, onSnapshot, query, serverTimestamp, setDoc, Timestamp,
 } from 'firebase/firestore';
-import { Lobby, LobbyLocation, LobbyMember } from '../types';
+import { Lobby, LobbyLocation, LobbyMember, Scorecard } from '../types';
+import { apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiStartLobby } from './lobbyApi';
 
-// A lobby's event runs for 8 hours from its scheduled start. Kept in sync with
-// the same window in firestore.rules, which is what actually enforces it.
-export const EVENT_DURATION_MS = 8 * 60 * 60 * 1000;
+const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
 function membershipRef(userId: string, lobbyId: string) {
   return doc(db, 'users', userId, 'lobbyMemberships', lobbyId);
@@ -20,11 +19,6 @@ export function lobbyStartMs(lobby: Pick<Lobby, 'eventDate'>): number {
   return new Date(value).getTime();
 }
 
-export function isLobbyLive(lobby: Pick<Lobby, 'eventDate'>, now = Date.now()): boolean {
-  const start = lobbyStartMs(lobby);
-  return start > 0 && now >= start && now < start + EVENT_DURATION_MS;
-}
-
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous O/0/I/1
 
 export function generateShareCode(length = 6): string {
@@ -35,84 +29,43 @@ export function generateShareCode(length = 6): string {
   return out;
 }
 
-interface CreateLobbyInput {
-  name: string;
-  isClosed: boolean;
-  eventDate: Date;
-  creatorId: string;
-  creatorName: string;
-  creatorGolfClub?: string;
-  creatorAvatarUrl?: string;
-}
+// --- Lifecycle actions: all go through the server (see src/lib/lobbyApi.ts)
+// so a client can never touch status, credits, or membership eligibility
+// directly. See firestore.rules — these are the only writes the rules
+// actually permit for lobbies/members beyond the host editing minor details
+// before start. ---
 
-// Writes are sequential (not batched) on purpose: the member/secret-join
-// security rules read the parent lobby doc via get(), which only sees
-// already-committed writes — batching them would make that get() see the
-// lobby as not-yet-existing and fail the permission check.
-export async function createLobby(input: CreateLobbyInput): Promise<{ id: string; shareCode: string | null }> {
-  const lobbyRef = doc(collection(db, 'lobbies'));
-  await setDoc(lobbyRef, {
+export async function createLobby(input: {
+  name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18;
+}): Promise<{ id: string; shareCode: string | null }> {
+  return apiCreateLobby({
     name: input.name,
     isClosed: input.isClosed,
-    eventDate: Timestamp.fromDate(input.eventDate),
-    creatorId: input.creatorId,
-    creatorName: input.creatorName,
-    status: 'scheduled',
-    createdAt: serverTimestamp(),
-  });
-
-  let shareCode: string | null = null;
-  if (input.isClosed) {
-    shareCode = generateShareCode();
-    await setDoc(doc(db, 'lobbies', lobbyRef.id, 'secret', 'join'), {
-      creatorId: input.creatorId,
-      code: shareCode,
-    });
-  }
-
-  await setDoc(doc(db, 'lobbies', lobbyRef.id, 'members', input.creatorId), {
-    userId: input.creatorId,
-    name: input.creatorName,
-    golfClub: input.creatorGolfClub || '',
-    avatarUrl: input.creatorAvatarUrl || '',
-    joinedAt: serverTimestamp(),
-  });
-
-  await setDoc(membershipRef(input.creatorId, lobbyRef.id), {
-    lobbyId: lobbyRef.id,
-    joinedAt: serverTimestamp(),
-  });
-
-  return { id: lobbyRef.id, shareCode };
-}
-
-interface JoinLobbyInput {
-  lobbyId: string;
-  isClosed: boolean;
-  userId: string;
-  name: string;
-  golfClub?: string;
-  avatarUrl?: string;
-  enteredCode?: string;
-}
-
-export async function joinLobby(input: JoinLobbyInput): Promise<void> {
-  const data: Record<string, unknown> = {
-    userId: input.userId,
-    name: input.name,
-    golfClub: input.golfClub || '',
-    avatarUrl: input.avatarUrl || '',
-    joinedAt: serverTimestamp(),
-  };
-  if (input.isClosed) {
-    data.enteredCode = input.enteredCode || '';
-  }
-  await setDoc(doc(db, 'lobbies', input.lobbyId, 'members', input.userId), data);
-  await setDoc(membershipRef(input.userId, input.lobbyId), {
-    lobbyId: input.lobbyId,
-    joinedAt: serverTimestamp(),
+    eventDate: input.eventDate.toISOString(),
+    holes: input.holes,
   });
 }
+
+export async function joinLobby(input: { lobbyId: string; enteredCode?: string }): Promise<{ ok: true; alreadyMember?: boolean }> {
+  return apiJoinLobby({ lobbyId: input.lobbyId, code: input.enteredCode });
+}
+
+export async function startLobby(lobbyId: string): Promise<{ charged: number; skipped: number }> {
+  return apiStartLobby(lobbyId);
+}
+
+export async function finishLobby(lobbyId: string): Promise<{ standingsCount: number }> {
+  return apiFinishLobby(lobbyId);
+}
+
+export async function deleteLobby(lobbyId: string): Promise<void> {
+  await apiDeleteLobby(lobbyId);
+}
+
+// --- Direct client writes: still permitted by the rules, either because
+// they're harmless (editing a still-scheduled lobby's details) or because
+// they're the member's own doc (leaving) or one the host/admin can always
+// remove (kicking), and only while the lobby hasn't started. ---
 
 export async function leaveLobby(lobbyId: string, userId: string): Promise<void> {
   await deleteDoc(doc(db, 'lobbies', lobbyId, 'members', userId));
@@ -122,10 +75,6 @@ export async function leaveLobby(lobbyId: string, userId: string): Promise<void>
 export async function kickMember(lobbyId: string, memberId: string): Promise<void> {
   await deleteDoc(doc(db, 'lobbies', lobbyId, 'members', memberId));
   await deleteDoc(membershipRef(memberId, lobbyId));
-}
-
-export async function deleteLobby(lobbyId: string): Promise<void> {
-  await deleteDoc(doc(db, 'lobbies', lobbyId));
 }
 
 // Returns the (possibly newly-generated) share code when the lobby ends up
@@ -139,7 +88,11 @@ export async function updateLobby(
   const payload: Record<string, unknown> = { updatedAt: serverTimestamp() };
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.isClosed !== undefined) payload.isClosed = updates.isClosed;
-  if (updates.eventDate !== undefined) payload.eventDate = Timestamp.fromDate(updates.eventDate);
+  if (updates.eventDate !== undefined) {
+    const eventTimestamp = Timestamp.fromDate(updates.eventDate);
+    payload.eventDate = eventTimestamp;
+    payload.expiresAt = Timestamp.fromMillis(eventTimestamp.toMillis() + TWELVE_HOURS_MS);
+  }
   await setDoc(doc(db, 'lobbies', lobbyId), payload, { merge: true });
 
   if (updates.isClosed !== true || !creatorId) {
@@ -163,18 +116,62 @@ export async function getMemberCount(lobbyId: string): Promise<number> {
   return snap.data().count;
 }
 
-// Backfills the membership index for anyone who joined a lobby before that
-// index existed. Cheap and idempotent: one read, and a write only if missing.
-export async function ensureMembershipIndexed(userId: string, lobbyId: string): Promise<void> {
-  const ref = membershipRef(userId, lobbyId);
-  const snap = await getDoc(ref);
-  if (snap.exists()) return;
-  await setDoc(ref, { lobbyId, joinedAt: serverTimestamp() });
-}
-
 export async function getMemberPreview(lobbyId: string, max = 5): Promise<LobbyMember[]> {
   const snap = await getDocs(query(collection(db, 'lobbies', lobbyId, 'members'), fbLimit(max)));
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as LobbyMember));
+}
+
+export function subscribeToLobby(
+  lobbyId: string,
+  onChange: (lobby: Lobby | null) => void,
+  onError?: (err: unknown) => void
+) {
+  return onSnapshot(
+    doc(db, 'lobbies', lobbyId),
+    (snap) => onChange(snap.exists() ? ({ id: snap.id, ...snap.data() } as Lobby) : null),
+    (err) => onError?.(err)
+  );
+}
+
+export function subscribeToScorecards(
+  lobbyId: string,
+  onChange: (cards: Scorecard[]) => void,
+  onError?: (err: unknown) => void
+) {
+  return onSnapshot(
+    collection(db, 'lobbies', lobbyId, 'scorecards'),
+    (snap) => onChange(snap.docs.map(d => ({ id: d.id, ...d.data() } as Scorecard))),
+    (err) => onError?.(err)
+  );
+}
+
+// Saves the player's full set of per-hole strokes (not a delta — a merged
+// setDoc replaces the whole `strokes` map, and the rule wants total/
+// holesPlayed computed over the complete set anyway). total/holesPlayed are
+// recomputed again, server-side and authoritatively, when the lobby finishes.
+export async function saveStrokes(
+  lobbyId: string,
+  player: { uid: string; name: string; avatarUrl?: string },
+  strokes: Record<string, number>
+): Promise<void> {
+  let total = 0;
+  let holesPlayed = 0;
+  for (const value of Object.values(strokes)) {
+    if (Number.isInteger(value) && value > 0) {
+      total += value;
+      holesPlayed += 1;
+    }
+  }
+
+  await setDoc(doc(db, 'lobbies', lobbyId, 'scorecards', player.uid), {
+    userId: player.uid,
+    name: player.name,
+    avatarUrl: player.avatarUrl || '',
+    strokes,
+    total,
+    holesPlayed,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function writeLobbyLocation(lobbyId: string, userId: string, lat: number, lng: number): Promise<void> {
@@ -182,7 +179,7 @@ export async function writeLobbyLocation(lobbyId: string, userId: string, lat: n
     userId,
     lat,
     lng,
-    updatedAt: new Date().toISOString(),
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -200,8 +197,8 @@ export function subscribeToLobbyLocations(
 
 // Reads the caller's own membership index, then loads those lobby documents
 // (which are publicly readable). Deliberately not a collection-group query:
-// that needs a manually created index, and its rule spends get() calls against
-// the 10-document-access budget Firestore allows a single query.
+// that needs a manually created index, and its rule would spend get() calls
+// against the 10-document-access budget Firestore allows a single query.
 export async function getMyLobbies(uid: string): Promise<Lobby[]> {
   const membershipSnap = await getDocs(collection(db, 'users', uid, 'lobbyMemberships'));
 
@@ -214,4 +211,12 @@ export async function getMyLobbies(uid: string): Promise<Lobby[]> {
   return lobbies
     .filter((l): l is Lobby => !!l)
     .sort((a, b) => lobbyStartMs(a) - lobbyStartMs(b));
+}
+
+// The single lobby (if any) that counts toward the "one active lobby per
+// user" rule — status 'scheduled' or 'live'. Used to gate Create/Join in the
+// UI; the server re-checks this authoritatively regardless.
+export async function getMyActiveLobby(uid: string): Promise<Lobby | null> {
+  const lobbies = await getMyLobbies(uid);
+  return lobbies.find(l => l.status === 'scheduled' || l.status === 'live') || null;
 }

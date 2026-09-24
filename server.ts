@@ -1,24 +1,24 @@
+// Must be the very first import: this runs dotenv's .env loading as a side
+// effect. ES module imports are all evaluated before this file's own body
+// runs, so if this weren't first, ./api/_lib/firebaseAdmin (pulled in below,
+// transitively, by the lobby handlers) would read process.env.
+// FIREBASE_SERVICE_ACCOUNT_KEY before .env had populated it.
+import 'dotenv/config';
+
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import Stripe from "stripe";
-import dotenv from "dotenv";
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyCaller } from './api/_lib/auth';
-import chargeLobbyCreditsHandler from './api/charge-lobby-credits';
+import { db } from './api/_lib/firebaseAdmin';
+import lobbyMaintenanceHandler from './api/lobby-maintenance';
+import createLobbyHandler from './api/create-lobby';
+import joinLobbyHandler from './api/join-lobby';
+import startLobbyHandler from './api/start-lobby';
+import finishLobbyHandler from './api/finish-lobby';
+import deleteLobbyHandler from './api/delete-lobby';
 
-dotenv.config();
-
-// Initialize Firebase Admin
-if (!getApps().length) {
-  initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
-}
-
-const db = getFirestore();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 async function startServer() {
@@ -117,7 +117,12 @@ async function startServer() {
     }
   });
 
-  app.all("/api/charge-lobby-credits", (req, res) => chargeLobbyCreditsHandler(req, res));
+  app.all("/api/lobby-maintenance", (req, res) => lobbyMaintenanceHandler(req, res));
+  app.post("/api/create-lobby", (req, res) => createLobbyHandler(req, res));
+  app.post("/api/join-lobby", (req, res) => joinLobbyHandler(req, res));
+  app.post("/api/start-lobby", (req, res) => startLobbyHandler(req, res));
+  app.post("/api/finish-lobby", (req, res) => finishLobbyHandler(req, res));
+  app.post("/api/delete-lobby", (req, res) => deleteLobbyHandler(req, res));
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

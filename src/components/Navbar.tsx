@@ -1,6 +1,6 @@
 import { auth } from '../lib/firebase';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { LogIn, LogOut, Menu, X, Trophy, Map, ScrollText, UserCircle, Settings, Users } from 'lucide-react';
+import { LogIn, LogOut, Menu, X, Trophy, Map, ScrollText, UserCircle, Settings, Users, History } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -35,6 +35,7 @@ export function Navbar({ user, userDoc, participant }: { user: any, userDoc: any
     { name: 'Leaderboard', path: '/leaderboard', icon: Trophy },
     { name: 'Player Map', path: '/map', icon: Map },
     { name: 'The Rules', path: '/rules', icon: ScrollText },
+    ...(user ? [{ name: 'My Rounds', path: '/my-rounds', icon: History }] : []),
   ];
 
   const isAdmin = userDoc?.role === 'admin' || user?.email === 'admin@gmail.com';

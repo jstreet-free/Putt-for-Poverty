@@ -759,9 +759,12 @@ function MyActivity({ lobbies, scores, loading, lobbiesError }: {
                   </div>
                 </div>
                 <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
-                  l.status === 'charged' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
+                  l.status === 'live' ? 'bg-rose-50 text-rose-600'
+                    : l.status === 'finished' ? 'bg-blue-50 text-blue-600'
+                    : l.status === 'expired' ? 'bg-slate-100 text-slate-500'
+                    : 'bg-emerald-50 text-emerald-600'
                 }`}>
-                  {l.status === 'charged' ? 'Started' : 'Scheduled'}
+                  {l.status === 'live' ? 'Live' : l.status === 'finished' ? 'Finished' : l.status === 'expired' ? 'Expired' : 'Scheduled'}
                 </span>
               </button>
             ))}
