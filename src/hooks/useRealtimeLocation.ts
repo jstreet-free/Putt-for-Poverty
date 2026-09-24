@@ -1,22 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { Lobby } from '../types';
-import { getMyLobbies, isLobbyLive, writeLobbyLocation } from '../lib/lobbyService';
+import { collection, doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { writeLobbyLocation } from '../lib/lobbyService';
 
-const MIN_UPDATE_INTERVAL_MS = 60_000;
-const MIN_MOVEMENT_METERS = 100;
-const LOBBY_REFRESH_MS = 5 * 60_000;
+const MIN_UPDATE_INTERVAL_MS = 15_000;
+const MIN_MOVEMENT_METERS = 10;
 
 interface GeoPoint {
   lat: number;
   lng: number;
 }
 
-// Positions are rounded to ~1.1km before being shared with the rest of the
-// lobby — close enough to see who is out playing where, without broadcasting
-// anyone's exact real-time position.
+// Trims GPS noise (a stationary phone can jitter a few metres between
+// readings) without meaningfully reducing precision — this is shared with a
+// live lobby's own members, not broadcast publicly, so there's no privacy
+// reason to round further than that.
 function roundForSharing(value: number): number {
-  return Math.round(value * 100) / 100;
+  return Math.round(value * 100000) / 100000;
 }
 
 function haversineDistance(a: GeoPoint, b: GeoPoint): number {
@@ -30,51 +31,77 @@ function haversineDistance(a: GeoPoint, b: GeoPoint): number {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-// Shares the signed-in player's position with every lobby of theirs whose
-// event is currently running. Outside an event window nothing is written —
-// the matching firestore.rules condition rejects it anyway.
+// Shares the signed-in player's position with their one active lobby, but
+// only while it is actually live and they are a charged member (a spectator
+// never shares or needs to — firestore.rules would reject the write anyway).
 export function useRealtimeLocation(user: User | null) {
   const [tracking, setTracking] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
-  const [liveLobbies, setLiveLobbies] = useState<Lobby[]>([]);
+  const [activeLobbyId, setActiveLobbyId] = useState<string | null>(null);
+  const [lobbyStatus, setLobbyStatus] = useState<string | null>(null);
+  const [isChargedMember, setIsChargedMember] = useState(false);
   const lastWriteRef = useRef(0);
   const lastPositionRef = useRef<GeoPoint | null>(null);
-  const liveLobbiesRef = useRef<Lobby[]>([]);
 
-  liveLobbiesRef.current = liveLobbies;
-
+  // Layer 1: find the user's one active (scheduled/live) lobby by watching
+  // their membership index — this is small and changes rarely.
   useEffect(() => {
     if (!user) {
-      setLiveLobbies([]);
+      setActiveLobbyId(null);
       return;
     }
 
-    let active = true;
-    const refresh = async () => {
-      try {
-        const lobbies = await getMyLobbies(user.uid);
-        if (!active) return;
-        setLiveLobbies(lobbies.filter(l => isLobbyLive(l)));
-      } catch (error) {
-        console.warn('Could not load lobbies for location sharing:', error);
+    const unsub = onSnapshot(collection(db, 'users', user.uid, 'lobbyMemberships'), async (snap) => {
+      for (const membership of snap.docs) {
+        try {
+          const lobbySnap = await getDoc(doc(db, 'lobbies', membership.id));
+          const status = lobbySnap.data()?.status;
+          if (status === 'scheduled' || status === 'live') {
+            setActiveLobbyId(membership.id);
+            return;
+          }
+        } catch {
+          // ignore — try the next membership entry
+        }
       }
-    };
+      setActiveLobbyId(null);
+    }, () => setActiveLobbyId(null));
 
-    refresh();
-    const interval = setInterval(refresh, LOBBY_REFRESH_MS);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
+    return () => unsub();
   }, [user]);
 
-  // Keyed on the ids rather than the array so a refresh that finds the same
-  // lobbies doesn't tear down and restart the GPS watcher.
-  const liveLobbyIds = liveLobbies.map(l => l.id).sort().join(',');
+  // Layer 2: watch that lobby's status so tracking starts/stops the instant
+  // the host presses Start or Finish.
+  useEffect(() => {
+    if (!activeLobbyId) {
+      setLobbyStatus(null);
+      return;
+    }
+    const unsub = onSnapshot(doc(db, 'lobbies', activeLobbyId), (snap) => {
+      setLobbyStatus(snap.exists() ? snap.data().status : null);
+    }, () => setLobbyStatus(null));
+    return () => unsub();
+  }, [activeLobbyId]);
+
+  // Layer 3: watch the user's own member doc for chargeStatus — a spectator
+  // (no credit when the host started) never shares location.
+  useEffect(() => {
+    if (!user || !activeLobbyId) {
+      setIsChargedMember(false);
+      return;
+    }
+    const unsub = onSnapshot(doc(db, 'lobbies', activeLobbyId, 'members', user.uid), (snap) => {
+      setIsChargedMember(snap.data()?.chargeStatus === 'charged');
+    }, () => setIsChargedMember(false));
+    return () => unsub();
+  }, [user, activeLobbyId]);
+
+  const shouldTrack = !!user && !!activeLobbyId && lobbyStatus === 'live' && isChargedMember;
 
   useEffect(() => {
-    if (!user || !liveLobbyIds) {
+    if (!shouldTrack) {
       setTracking(false);
+      lastPositionRef.current = null;
       return;
     }
 
@@ -105,14 +132,14 @@ export function useRealtimeLocation(user: User | null) {
         lng: position.coords.longitude,
       };
 
-      const lat = roundForSharing(position.coords.latitude);
-      const lng = roundForSharing(position.coords.longitude);
-
-      for (const lobby of liveLobbiesRef.current) {
-        writeLobbyLocation(lobby.id, user.uid, lat, lng).catch((error) => {
-          console.warn(`Could not share location with lobby ${lobby.id}:`, error);
-        });
-      }
+      writeLobbyLocation(
+        activeLobbyId as string,
+        (user as User).uid,
+        roundForSharing(position.coords.latitude),
+        roundForSharing(position.coords.longitude)
+      ).catch((error) => {
+        console.warn(`Could not share location with lobby ${activeLobbyId}:`, error);
+      });
     };
 
     const handleError = (error: GeolocationPositionError) => {
@@ -123,13 +150,12 @@ export function useRealtimeLocation(user: User | null) {
 
     const watchId = navigator.geolocation.watchPosition(handlePosition, handleError, {
       enableHighAccuracy: true,
-      maximumAge: 15_000,
+      maximumAge: 5_000,
       timeout: 30_000,
     });
 
     return () => navigator.geolocation.clearWatch(watchId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, liveLobbyIds]);
+  }, [shouldTrack, activeLobbyId, user]);
 
-  return { tracking, permissionDenied, liveLobbies };
+  return { tracking, permissionDenied };
 }

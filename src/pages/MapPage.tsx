@@ -8,49 +8,8 @@ import { Lock, Radio, Clock, Users, Navigation } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { Lobby, LobbyLocation, LobbyMember } from '../types';
-import { getMyLobbies, isLobbyLive, subscribeToLobbyLocations } from '../lib/lobbyService';
-
-interface PlayerPin {
-  id: string;
-  name: string;
-  avatarUrl?: string;
-  golfClub?: string;
-  lat: number;
-  lng: number;
-  updatedAt?: string;
-  isSelf: boolean;
-}
-
-function createAvatarIcon(pin: PlayerPin) {
-  const ring = pin.isSelf ? '#f59e0b' : '#10b981';
-  const inner = pin.avatarUrl
-    ? `<img src="${escapeHtml(pin.avatarUrl)}" style="width:100%;height:100%;object-fit:cover;" />`
-    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${ring};color:#fff;font-weight:800;font-size:16px;font-family:system-ui,sans-serif;">${escapeHtml((pin.name?.[0] || '?').toUpperCase())}</div>`;
-
-  return L.divIcon({
-    className: '',
-    html: `
-      <div style="position:relative;width:46px;height:56px;">
-        <div style="width:44px;height:44px;border-radius:9999px;overflow:hidden;border:3px solid ${ring};box-shadow:0 4px 12px rgba(15,23,42,0.35);background:#fff;">
-          ${inner}
-        </div>
-        <div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:10px solid ${ring};"></div>
-      </div>
-    `,
-    iconSize: [46, 56],
-    iconAnchor: [23, 56],
-    popupAnchor: [0, -52],
-  });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+import { getMyLobbies, subscribeToLobbyLocations } from '../lib/lobbyService';
+import { createAvatarIcon, formatLastUpdated, PlayerPin } from '../lib/mapIcons';
 
 // Keeps the viewport on the pins as they load / move.
 function MapFocus({ pins }: { pins: PlayerPin[] }) {
@@ -74,13 +33,6 @@ export function MapPage({ user }: { user: FirebaseUser | null }) {
   const [geoDenied, setGeoDenied] = useState(false);
   const [locationsByLobby, setLocationsByLobby] = useState<Record<string, LobbyLocation[]>>({});
   const [membersByLobby, setMembersByLobby] = useState<Record<string, LobbyMember[]>>({});
-  const [now, setNow] = useState(() => Date.now());
-
-  // Re-evaluates which lobbies are live as events start and finish.
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -105,10 +57,7 @@ export function MapPage({ user }: { user: FirebaseUser | null }) {
     return () => { active = false; };
   }, [user]);
 
-  const liveLobbies = useMemo(
-    () => myLobbies.filter(l => isLobbyLive(l, now)),
-    [myLobbies, now]
-  );
+  const liveLobbies = useMemo(() => myLobbies.filter(l => l.status === 'live'), [myLobbies]);
   const liveLobbyIds = useMemo(() => liveLobbies.map(l => l.id).join(','), [liveLobbies]);
 
   // Own position comes straight from the device, so it is available before an
@@ -159,7 +108,7 @@ export function MapPage({ user }: { user: FirebaseUser | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveLobbyIds]);
 
-  const isInAnyLobby = myLobbies.length > 0;
+  const isInAnyLobby = myLobbies.some(l => l.status === 'scheduled' || l.status === 'live');
   const isEventLive = liveLobbies.length > 0;
 
   const pins = useMemo<PlayerPin[]>(() => {
@@ -179,7 +128,9 @@ export function MapPage({ user }: { user: FirebaseUser | null }) {
             golfClub: member?.golfClub,
             lat: location.lat,
             lng: location.lng,
-            updatedAt: location.updatedAt,
+            updatedAt: typeof (location.updatedAt as any)?.toDate === 'function'
+              ? (location.updatedAt as any).toDate().toISOString()
+              : location.updatedAt,
             isSelf: location.userId === user.uid,
           });
         }
@@ -187,7 +138,7 @@ export function MapPage({ user }: { user: FirebaseUser | null }) {
     }
 
     // Always prefer the device's own reading for yourself — it is fresher than
-    // the rounded copy shared with the lobby, and it exists pre-event too.
+    // the shared copy, and it exists pre-event too (before anything's shared).
     if (ownPosition) {
       const ownMember = Object.values(membersByLobby)
         .flat()
@@ -339,14 +290,4 @@ function StatCard({ icon: Icon, label, value, tone }: {
       </div>
     </div>
   );
-}
-
-function formatLastUpdated(updatedAt?: string): string {
-  if (!updatedAt) return 'just now';
-  const diff = Date.now() - new Date(updatedAt).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.floor(mins / 60);
-  return `${hours} hr ago`;
 }
