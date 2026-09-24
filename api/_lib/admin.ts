@@ -1,17 +1,8 @@
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
-import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { db } from './firebaseAdmin';
 import { VerifiedCaller } from './auth';
 
-if (!getApps().length) {
-  initializeApp({ projectId: firebaseConfig.projectId });
-}
-
-// The app's client SDK connects to a named database (see src/lib/firebase.ts),
-// not "(default)" — getFirestore() with no args would silently connect to a
-// different, unused database. Every admin-SDK Firestore call in this repo
-// must go through this `db`, never a bare getFirestore().
-export const db = getFirestore(firebaseConfig.firestoreDatabaseId);
+export { db } from './firebaseAdmin';
 export { FieldValue, Timestamp };
 
 const SPECIAL_ADMIN_EMAIL = 'jstreet@freeatlast.st';

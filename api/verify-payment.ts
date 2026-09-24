@@ -1,16 +1,7 @@
-import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
+import { FieldValue } from 'firebase-admin/firestore';
 import Stripe from 'stripe';
 import { verifyCaller } from './_lib/auth';
-
-if (!getApps().length) {
-  initializeApp({ projectId: firebaseConfig.projectId });
-}
-// Must match the named database the client SDK uses (src/lib/firebase.ts) —
-// a bare getFirestore() connects to "(default)" instead, a different,
-// unused database.
-const db = getFirestore(firebaseConfig.firestoreDatabaseId);
+import { db } from './_lib/firebaseAdmin';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

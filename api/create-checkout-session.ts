@@ -1,11 +1,6 @@
-import { initializeApp, getApps } from 'firebase-admin/app';
-import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
 import Stripe from 'stripe';
 import { verifyCaller } from './_lib/auth';
-
-if (!getApps().length) {
-  initializeApp({ projectId: firebaseConfig.projectId });
-}
+import './_lib/firebaseAdmin'; // ensures the admin app is initialized before verifyCaller() uses it
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
