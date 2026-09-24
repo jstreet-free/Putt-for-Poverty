@@ -722,7 +722,7 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
     }
   };
 
-  const startAvailable = now >= canStartWindowOpensAt;
+  const startAvailable = now >= canStartWindowOpensAt && !isPastExpiry;
   const isSpectator = lobby.status === 'live' && myMember?.chargeStatus !== 'charged';
 
   return (
@@ -993,8 +993,20 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
               )}
             </div>
 
+            {/* This lobby's window has passed without anyone starting it —
+                still shown as 'scheduled' until the daily maintenance job
+                flips it to 'expired', but there's nothing left to do here. */}
+            {isPastExpiry && (
+              <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-5 text-center space-y-2">
+                <AlertTriangle size={22} className="mx-auto text-slate-300" />
+                <p className="text-sm font-bold text-slate-500">
+                  This lobby's window has passed without being started. No credits were charged, and it will be marked expired shortly.
+                </p>
+              </div>
+            )}
+
             {/* Host: start the event */}
-            {canManage && (
+            {canManage && !isPastExpiry && (
               <div className="bg-slate-900 rounded-2xl p-5 space-y-3">
                 <div className="flex items-center gap-2 text-white font-black text-xs uppercase tracking-widest">
                   <PlayCircle size={14} className="text-emerald-400" />

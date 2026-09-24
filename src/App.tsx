@@ -9,6 +9,7 @@ import { Home } from './pages/Home';
 import { Register } from './pages/Register';
 import { Leaderboard } from './pages/Leaderboard';
 import { Lobbies } from './pages/Lobbies';
+import { MyRounds } from './pages/MyRounds';
 import { MapPage } from './pages/MapPage';
 import { Rules } from './pages/Rules';
 import { ScoreUpload } from './pages/ScoreUpload';
@@ -106,6 +107,10 @@ export default function App() {
             <Route
               path="/lobbies"
               element={<Lobbies user={user} participant={participant} isAdmin={!!user && (userDoc?.role === 'admin' || user.email === 'admin@gmail.com')} />}
+            />
+            <Route
+              path="/my-rounds"
+              element={user ? <MyRounds user={user} /> : <Navigate to="/login" state={{ from: '/my-rounds' }} />}
             />
             <Route path="/rules" element={<Rules />} />
             <Route 
