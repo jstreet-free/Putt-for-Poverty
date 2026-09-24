@@ -82,15 +82,18 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
     setLobbyProcessResult(null);
     try {
       const idToken = await auth.currentUser?.getIdToken();
-      const res = await fetch('/api/charge-lobby-credits', {
+      const res = await fetch('/api/lobby-maintenance', {
         method: 'POST',
         headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
       });
       const data = await res.json();
       if (res.ok) {
-        setLobbyProcessResult(`Charged ${data.chargedMembers} member(s) across ${data.chargedLobbies} lobby/lobbies (${data.skippedMembers} skipped).`);
+        const errorNote = data.errors?.length ? ` (${data.errors.length} error(s) — check server logs)` : '';
+        setLobbyProcessResult(
+          `Expired ${data.expiredScheduled}, finished ${data.finishedLive}, deleted ${data.deletedLobbies}.${errorNote}`
+        );
       } else {
-        setLobbyProcessResult(data.error || 'Failed to process lobbies.');
+        setLobbyProcessResult(data.error || 'Failed to run lobby maintenance.');
       }
     } catch (err) {
       console.error(err);
@@ -157,10 +160,10 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
         <div>
           <h3 className="font-black text-slate-800 text-sm uppercase tracking-tight flex items-center gap-2">
             <PlayCircle size={16} className="text-blue-500" />
-            Lobby Credit Charging
+            Lobby Maintenance
           </h3>
           <p className="text-xs text-slate-400 font-medium mt-1">
-            Runs automatically on a schedule, but you can trigger it manually to charge any lobby whose event date has already arrived.
+            Credits are charged the moment a host presses Start on their lobby, not on a schedule. This runs automatically once a day to expire lobbies nobody started, finish events nobody wrapped up, and clean up old ones — trigger it manually if you don't want to wait.
           </p>
           {lobbyProcessResult && <p className="text-xs font-bold text-blue-600 mt-1">{lobbyProcessResult}</p>}
         </div>
@@ -170,7 +173,7 @@ export function Admin({ user, participant }: { user: any; participant: any }) {
           className="shrink-0 flex items-center justify-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
           {processingLobbies ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />}
-          {processingLobbies ? 'Processing...' : 'Process Due Lobbies Now'}
+          {processingLobbies ? 'Processing...' : 'Run Maintenance Now'}
         </button>
       </div>
 

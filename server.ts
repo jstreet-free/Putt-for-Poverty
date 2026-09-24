@@ -7,7 +7,12 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 import { verifyCaller } from './api/_lib/auth';
-import chargeLobbyCreditsHandler from './api/charge-lobby-credits';
+import lobbyMaintenanceHandler from './api/lobby-maintenance';
+import createLobbyHandler from './api/create-lobby';
+import joinLobbyHandler from './api/join-lobby';
+import startLobbyHandler from './api/start-lobby';
+import finishLobbyHandler from './api/finish-lobby';
+import deleteLobbyHandler from './api/delete-lobby';
 
 dotenv.config();
 
@@ -117,7 +122,12 @@ async function startServer() {
     }
   });
 
-  app.all("/api/charge-lobby-credits", (req, res) => chargeLobbyCreditsHandler(req, res));
+  app.all("/api/lobby-maintenance", (req, res) => lobbyMaintenanceHandler(req, res));
+  app.post("/api/create-lobby", (req, res) => createLobbyHandler(req, res));
+  app.post("/api/join-lobby", (req, res) => joinLobbyHandler(req, res));
+  app.post("/api/start-lobby", (req, res) => startLobbyHandler(req, res));
+  app.post("/api/finish-lobby", (req, res) => finishLobbyHandler(req, res));
+  app.post("/api/delete-lobby", (req, res) => deleteLobbyHandler(req, res));
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
