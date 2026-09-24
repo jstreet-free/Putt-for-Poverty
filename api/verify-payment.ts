@@ -7,7 +7,10 @@ import { verifyCaller } from './_lib/auth';
 if (!getApps().length) {
   initializeApp({ projectId: firebaseConfig.projectId });
 }
-const db = getFirestore();
+// Must match the named database the client SDK uses (src/lib/firebase.ts) —
+// a bare getFirestore() connects to "(default)" instead, a different,
+// unused database.
+const db = getFirestore(firebaseConfig.firestoreDatabaseId);
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

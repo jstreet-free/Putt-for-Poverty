@@ -23,7 +23,10 @@ if (!getApps().length) {
   });
 }
 
-const db = getFirestore();
+// Must match the named database the client SDK uses (src/lib/firebase.ts) —
+// a bare getFirestore() connects to "(default)" instead, a different,
+// unused database.
+const db = getFirestore(firebaseConfig.firestoreDatabaseId);
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 async function startServer() {
