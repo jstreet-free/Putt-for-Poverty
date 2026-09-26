@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { HistoryEntry } from '../types';
 import { Trophy, Calendar, Flag, ChevronDown, Eye, History as HistoryIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 
 function formatDate(value: any): string {
@@ -13,9 +14,12 @@ function formatDate(value: any): string {
 }
 
 export function MyRounds({ user }: { user: FirebaseUser | null }) {
+  const [searchParams] = useSearchParams();
   const [rounds, setRounds] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(() => searchParams.get('round'));
+  const scrolledToDeepLink = useRef(false);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (!user) { setLoading(false); return; }
@@ -29,6 +33,19 @@ export function MyRounds({ user }: { user: FirebaseUser | null }) {
     });
     return () => unsub();
   }, [user]);
+
+  // Scrolls a round opened via a deep link (?round=<lobbyId>, e.g. from the
+  // account page's Match History) into view once it's rendered — only once,
+  // so it doesn't keep yanking the page back if the user scrolls away.
+  useEffect(() => {
+    const roundId = searchParams.get('round');
+    if (!roundId || loading || scrolledToDeepLink.current) return;
+    const el = itemRefs.current[roundId];
+    if (el) {
+      scrolledToDeepLink.current = true;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [searchParams, loading, rounds]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-12 space-y-8">
@@ -57,9 +74,12 @@ export function MyRounds({ user }: { user: FirebaseUser | null }) {
             return (
               <motion.div
                 key={round.lobbyId}
+                ref={(el) => { itemRefs.current[round.lobbyId] = el; }}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-white rounded-[2rem] border-2 border-slate-100 shadow-md overflow-hidden"
+                className={`bg-white rounded-[2rem] border-2 shadow-md overflow-hidden transition-colors ${
+                  expanded && searchParams.get('round') === round.lobbyId ? 'border-emerald-200' : 'border-slate-100'
+                }`}
               >
                 <button
                   onClick={() => setExpandedId(expanded ? null : round.lobbyId)}

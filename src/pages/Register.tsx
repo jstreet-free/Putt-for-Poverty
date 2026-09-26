@@ -12,7 +12,7 @@ import { motion } from 'motion/react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PlaceAutocomplete } from '../components/PlaceAutocomplete';
 import { getMyLobbies } from '../lib/lobbyService';
-import { Lobby, ScoreEntry } from '../types';
+import { HistoryEntry, Lobby, ScoreEntry } from '../types';
 
 const stripePromise = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY 
   ? loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) 
@@ -36,6 +36,7 @@ export function Register({ user, participant }: { user: any, participant: any })
 
   const [myLobbies, setMyLobbies] = useState<Lobby[]>([]);
   const [myScores, setMyScores] = useState<ScoreEntry[]>([]);
+  const [myHistory, setMyHistory] = useState<HistoryEntry[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
   const [lobbiesError, setLobbiesError] = useState<string | null>(null);
 
@@ -96,9 +97,21 @@ export function Register({ user, participant }: { user: any, participant: any })
       setMyScores(snap.docs.map(d => ({ id: d.id, ...d.data() } as ScoreEntry)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'scores'));
 
+    const historyQuery = query(
+      collection(db, 'users', user.uid, 'history'),
+      orderBy('finishedAt', 'desc'),
+      limit(10)
+    );
+    const unsubHistory = onSnapshot(historyQuery, (snap) => {
+      setMyHistory(snap.docs.map(d => ({ ...d.data() } as HistoryEntry)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'history'));
+
     getMyLobbies(user.uid)
       .then((lobbies) => {
-        setMyLobbies(lobbies);
+        // Once a lobby is finished/expired it moves to the Match History
+        // section below instead — this list is only ever the one lobby (if
+        // any) a user can currently be an active member of.
+        setMyLobbies(lobbies.filter(l => l.status === 'scheduled' || l.status === 'live'));
         setLobbiesError(null);
       })
       .catch((err) => {
@@ -107,7 +120,10 @@ export function Register({ user, participant }: { user: any, participant: any })
       })
       .finally(() => setActivityLoading(false));
 
-    return () => unsubScores();
+    return () => {
+      unsubScores();
+      unsubHistory();
+    };
   }, [user]);
 
   useEffect(() => {
@@ -697,6 +713,7 @@ export function Register({ user, participant }: { user: any, participant: any })
         <MyActivity
           lobbies={myLobbies}
           scores={myScores}
+          history={myHistory}
           loading={activityLoading}
           lobbiesError={lobbiesError}
         />
@@ -717,9 +734,10 @@ function formatScoreDate(value: any): string {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-function MyActivity({ lobbies, scores, loading, lobbiesError }: {
+function MyActivity({ lobbies, scores, history, loading, lobbiesError }: {
   lobbies: Lobby[];
   scores: ScoreEntry[];
+  history: HistoryEntry[];
   loading: boolean;
   lobbiesError: string | null;
 }) {
@@ -742,7 +760,7 @@ function MyActivity({ lobbies, scores, loading, lobbiesError }: {
         ) : lobbiesError ? (
           <p className="text-sm text-rose-600 font-bold">{lobbiesError}</p>
         ) : lobbies.length === 0 ? (
-          <p className="text-sm text-slate-400 font-medium">You haven't joined or created any lobbies yet.</p>
+          <p className="text-sm text-slate-400 font-medium">You're not in an active lobby right now.</p>
         ) : (
           <div className="space-y-2">
             {lobbies.map((l) => (
@@ -759,12 +777,9 @@ function MyActivity({ lobbies, scores, loading, lobbiesError }: {
                   </div>
                 </div>
                 <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg uppercase ${
-                  l.status === 'live' ? 'bg-rose-50 text-rose-600'
-                    : l.status === 'finished' ? 'bg-blue-50 text-blue-600'
-                    : l.status === 'expired' ? 'bg-slate-100 text-slate-500'
-                    : 'bg-emerald-50 text-emerald-600'
+                  l.status === 'live' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
                 }`}>
-                  {l.status === 'live' ? 'Live' : l.status === 'finished' ? 'Finished' : l.status === 'expired' ? 'Expired' : 'Scheduled'}
+                  {l.status === 'live' ? 'Live' : 'Scheduled'}
                 </span>
               </button>
             ))}
@@ -776,6 +791,42 @@ function MyActivity({ lobbies, scores, loading, lobbiesError }: {
         <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
           <Trophy size={14} />
           Match History
+        </h3>
+        {history.length === 0 ? (
+          <p className="text-sm text-slate-400 font-medium">No finished lobbies yet — results show up here once an event you played in wraps up.</p>
+        ) : (
+          <div className="space-y-2">
+            {history.map((h) => {
+              const isSpectator = h.myPosition === null;
+              return (
+                <button
+                  key={h.lobbyId}
+                  onClick={() => navigate(`/my-rounds?round=${h.lobbyId}`)}
+                  className="w-full flex items-center justify-between gap-3 bg-slate-50 hover:bg-slate-100 p-4 rounded-2xl border border-slate-100 transition-colors text-left"
+                >
+                  <div className="min-w-0 flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-xs ${
+                      isSpectator ? 'bg-slate-100 text-slate-400' : h.myPosition === 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600'
+                    }`}>
+                      {isSpectator ? '—' : `#${h.myPosition}`}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-800 text-sm truncate">{h.lobbyName}</div>
+                      <div className="text-xs text-slate-400 font-medium">{formatLobbyDate(h.finishedAt)} · {h.playerCount} player{h.playerCount === 1 ? '' : 's'}</div>
+                    </div>
+                  </div>
+                  {!isSpectator && <span className="text-xl font-black text-slate-900 shrink-0">{h.myTotal}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-4 pt-6 border-t border-slate-100">
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+          <Flag size={14} />
+          Score Submissions
         </h3>
         {scores.length === 0 ? (
           <p className="text-sm text-slate-400 font-medium">No rounds submitted yet.</p>
