@@ -13,6 +13,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PlaceAutocomplete } from '../components/PlaceAutocomplete';
 import { getMyLobbies } from '../lib/lobbyService';
 import { HistoryEntry, Lobby, ScoreEntry } from '../types';
+import { formatToPar } from '../lib/lobbyScoring';
 
 const stripePromise = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY 
   ? loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY) 
@@ -797,7 +798,8 @@ function MyActivity({ lobbies, scores, history, loading, lobbiesError }: {
         ) : (
           <div className="space-y-2">
             {history.map((h) => {
-              const isSpectator = h.myPosition === null;
+              const isSpectator = h.myStatus === 'spectator' || (h.myStatus === undefined && h.myPosition === null);
+              const isDnf = h.myStatus === 'dnf';
               return (
                 <button
                   key={h.lobbyId}
@@ -805,17 +807,21 @@ function MyActivity({ lobbies, scores, history, loading, lobbiesError }: {
                   className="w-full flex items-center justify-between gap-3 bg-slate-50 hover:bg-slate-100 p-4 rounded-2xl border border-slate-100 transition-colors text-left"
                 >
                   <div className="min-w-0 flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-xs ${
-                      isSpectator ? 'bg-slate-100 text-slate-400' : h.myPosition === 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600'
+                    <div className={`w-11 h-9 rounded-xl flex items-center justify-center shrink-0 font-black text-xs ${
+                      isSpectator || isDnf ? 'bg-slate-100 text-slate-400' : h.myPosition === 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600'
                     }`}>
-                      {isSpectator ? '—' : `#${h.myPosition}`}
+                      {isSpectator ? 'Spec' : isDnf ? 'DNF' : `#${h.myPosition}`}
                     </div>
                     <div className="min-w-0">
                       <div className="font-bold text-slate-800 text-sm truncate">{h.lobbyName}</div>
                       <div className="text-xs text-slate-400 font-medium">{formatLobbyDate(h.finishedAt)} · {h.playerCount} player{h.playerCount === 1 ? '' : 's'}</div>
                     </div>
                   </div>
-                  {!isSpectator && <span className="text-xl font-black text-slate-900 shrink-0">{h.myTotal}</span>}
+                  {!isSpectator && !isDnf && (
+                    <span className="text-xl font-black text-slate-900 shrink-0">
+                      {h.myToPar !== undefined && h.myToPar !== null ? formatToPar(h.myToPar) : h.myTotal}
+                    </span>
+                  )}
                 </button>
               );
             })}

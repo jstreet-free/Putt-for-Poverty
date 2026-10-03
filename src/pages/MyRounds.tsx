@@ -3,9 +3,19 @@ import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { HistoryEntry } from '../types';
 import { Trophy, Calendar, Flag, ChevronDown, Eye, History as HistoryIcon } from 'lucide-react';
+import { StandingsList } from '../components/lobby/StandingsList';
+import { formatToPar } from '../lib/lobbyScoring';
 import { motion, AnimatePresence } from 'motion/react';
 import { useSearchParams } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
+
+// Results saved before myStatus existed only know whether there was a place.
+function historyStatus(h: HistoryEntry): 'finished' | 'dnf' | 'spectator' {
+  if (h.myStatus === 'dnf') return 'dnf';
+  if (h.myStatus === 'spectator') return 'spectator';
+  if (h.myStatus === undefined && h.myPosition === null) return 'spectator';
+  return 'finished';
+}
 
 function formatDate(value: any): string {
   const d = value?.toDate ? value.toDate() : value ? new Date(value) : null;
@@ -70,7 +80,8 @@ export function MyRounds({ user }: { user: FirebaseUser | null }) {
         <div className="space-y-4">
           {rounds.map((round) => {
             const expanded = expandedId === round.lobbyId;
-            const isSpectator = round.myPosition === null;
+            const status = historyStatus(round);
+            const isSpectator = status === 'spectator';
             return (
               <motion.div
                 key={round.lobbyId}
@@ -87,9 +98,11 @@ export function MyRounds({ user }: { user: FirebaseUser | null }) {
                 >
                   <div className="flex items-center gap-4 min-w-0">
                     <div className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center shrink-0 font-black ${
-                      isSpectator ? 'bg-slate-100 text-slate-400' : round.myPosition === 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600'
+                      isSpectator || status === 'dnf' ? 'bg-slate-100 text-slate-400' : round.myPosition === 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600'
                     }`}>
-                      {isSpectator ? <Eye size={20} /> : (
+                      {isSpectator ? <Eye size={20} /> : status === 'dnf' ? (
+                        <span className="text-xs leading-none">DNF</span>
+                      ) : (
                         <>
                           <span className="text-[9px] uppercase tracking-widest opacity-70">Place</span>
                           <span className="text-xl leading-none">{round.myPosition}</span>
@@ -106,7 +119,16 @@ export function MyRounds({ user }: { user: FirebaseUser | null }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    {!isSpectator && <span className="text-2xl font-black text-slate-900">{round.myTotal}</span>}
+                    {!isSpectator && status !== 'dnf' && (
+                      <div className="text-right">
+                        <div className="text-2xl font-black text-slate-900">
+                          {round.myToPar !== undefined && round.myToPar !== null ? formatToPar(round.myToPar) : round.myTotal}
+                        </div>
+                        {round.myTotal !== null && round.myTotal !== undefined && (
+                          <div className="text-[10px] font-bold text-slate-400 uppercase">{round.myTotal} strokes</div>
+                        )}
+                      </div>
+                    )}
                     <ChevronDown size={18} className={`text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                   </div>
                 </button>
@@ -119,27 +141,8 @@ export function MyRounds({ user }: { user: FirebaseUser | null }) {
                       exit={{ height: 0, opacity: 0 }}
                       className="overflow-hidden"
                     >
-                      <div className="p-6 pt-0 space-y-2">
-                        {round.standings.map((row) => (
-                          <div
-                            key={row.userId}
-                            className={`flex items-center justify-between gap-3 p-3 rounded-xl border-2 ${
-                              row.userId === user?.uid ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-100'
-                            }`}
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 font-black text-xs ${
-                                row.position === 1 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'
-                              }`}>
-                                {row.position === 1 ? <Trophy size={13} /> : row.position}
-                              </div>
-                              <div className="font-black text-slate-800 text-sm truncate">
-                                {row.userId === user?.uid ? 'You' : row.name}
-                              </div>
-                            </div>
-                            <div className="text-lg font-black text-slate-900 shrink-0">{row.total}</div>
-                          </div>
-                        ))}
+                      <div className="p-6 pt-0">
+                        <StandingsList standings={round.standings} currentUserId={user?.uid ?? ''} />
                       </div>
                     </motion.div>
                   )}

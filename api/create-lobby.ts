@@ -2,6 +2,7 @@ import { verifyCaller } from './_lib/auth';
 import { db, FieldValue, Timestamp } from './_lib/admin';
 import { getActiveLobbyId } from './_lib/lobbies';
 import { HttpError, sendError } from './_lib/http';
+import { DEFAULT_PAR, validatePars } from './_lib/scoring';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous O/0/I/1
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
@@ -23,7 +24,7 @@ export default async function handler(req: any, res: any) {
     const caller = await verifyCaller(req);
     if (!caller) throw new HttpError(401, 'Unauthorized');
 
-    const { name, isClosed, eventDate, holes } = req.body || {};
+    const { name, isClosed, eventDate, holes, pars: requestedPars } = req.body || {};
 
     if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 99) {
       throw new HttpError(400, 'Lobby name must be 1-99 characters.');
@@ -34,6 +35,12 @@ export default async function handler(req: any, res: any) {
     if (holes !== 9 && holes !== 18) {
       throw new HttpError(400, 'holes must be 9 or 18.');
     }
+    // Par is optional: omitted means par 4 on every hole.
+    const pars: number[] = requestedPars === undefined
+      ? Array.from({ length: holes }, () => DEFAULT_PAR)
+      : requestedPars;
+    const parError = validatePars(pars, holes);
+    if (parError) throw new HttpError(400, parError);
     const parsedDate = new Date(eventDate);
     if (isNaN(parsedDate.getTime()) || parsedDate.getTime() <= Date.now()) {
       throw new HttpError(400, 'eventDate must be a valid date in the future.');
@@ -64,6 +71,7 @@ export default async function handler(req: any, res: any) {
       isClosed,
       eventDate: eventTimestamp,
       holes,
+      pars,
       creatorId: caller.uid,
       creatorName: participant.name,
       status: 'scheduled',

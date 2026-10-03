@@ -2,7 +2,7 @@ import { verifyCaller } from './_lib/auth';
 import { db, Timestamp } from './_lib/admin';
 import { isAdminCaller } from './_lib/admin';
 import { HttpError, sendError } from './_lib/http';
-import { rankScorecards, ScorecardLike } from './_lib/scoring';
+import { getPars, rankScorecards, tallyStrokes, Tally } from './_lib/scoring';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -22,29 +22,23 @@ export async function finishLobby(lobbyId: string): Promise<{ standingsCount: nu
     const scorecardByUid = new Map(scorecardsSnap.docs.map((d) => [d.id, d.data()]));
 
     const chargedMembers = membersSnap.docs.filter((d) => d.data().chargeStatus === 'charged');
+    const pars = getPars(lobby as { holes: 9 | 18; pars?: number[] });
 
     // Never trust client-computed totals — recompute from raw per-hole
-    // strokes, discarding anything with an invalid hole number or value.
-    const cards: ScorecardLike[] = chargedMembers.map((memberDoc) => {
+    // strokes, using the lobby's pars as they stand at finish.
+    const tallies: Tally[] = chargedMembers.map((memberDoc) => {
       const member = memberDoc.data();
       const card = scorecardByUid.get(memberDoc.id);
       const strokes = card?.strokes && typeof card.strokes === 'object' ? card.strokes : {};
-
-      let total = 0;
-      let holesPlayed = 0;
-      for (const key of Object.keys(strokes)) {
-        const holeNum = parseInt(key, 10);
-        const value = strokes[key];
-        if (!Number.isInteger(holeNum) || holeNum < 1 || holeNum > lobby.holes) continue;
-        if (!Number.isInteger(value) || value < 1 || value > 15) continue;
-        total += value;
-        holesPlayed += 1;
-      }
-
-      return { userId: memberDoc.id, name: member.name, avatarUrl: member.avatarUrl || undefined, total, holesPlayed };
+      return {
+        userId: memberDoc.id,
+        name: member.name,
+        ...(member.avatarUrl ? { avatarUrl: member.avatarUrl } : {}),
+        ...tallyStrokes(strokes, pars, lobby.holes),
+      };
     });
 
-    const standings = rankScorecards(cards);
+    const standings = rankScorecards(tallies, lobby.holes, 'final');
     const now = Timestamp.now();
 
     const result = {
@@ -54,6 +48,7 @@ export async function finishLobby(lobbyId: string): Promise<{ standingsCount: nu
       startedAt: lobby.startedAt || null,
       finishedAt: now,
       holes: lobby.holes,
+      pars,
       standings,
     };
 
@@ -61,11 +56,14 @@ export async function finishLobby(lobbyId: string): Promise<{ standingsCount: nu
 
     for (const memberDoc of membersSnap.docs) {
       const uid = memberDoc.id;
-      const standingRow = standings.find((s) => s.userId === uid) || null;
+      const standing = standings.find((s) => s.userId === uid) || null;
+      const isSpectator = memberDoc.data().chargeStatus !== 'charged';
       const historyEntry = {
         ...result,
-        myPosition: standingRow ? standingRow.position : null,
-        myTotal: standingRow ? standingRow.total : null,
+        myStatus: isSpectator || !standing ? 'spectator' : standing.status,
+        myPosition: standing ? standing.position : null,
+        myTotal: standing ? standing.total : null,
+        myToPar: standing ? standing.toPar : null,
         playerCount: standings.length,
       };
       tx.set(db.collection('users').doc(uid).collection('history').doc(lobbyId), historyEntry);

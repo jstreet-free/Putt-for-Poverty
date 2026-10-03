@@ -134,6 +134,7 @@ export interface Lobby {
   isClosed: boolean;
   eventDate: any; // Firestore Timestamp
   holes: 9 | 18;
+  pars?: number[]; // one per hole; missing on lobbies created before pars existed (treated as all 4s)
   status: LobbyStatus;
   startedAt?: any;
   finishedAt?: any;
@@ -164,13 +165,17 @@ export interface Scorecard {
   updatedAt: any;
 }
 
+export type StandingStatus = 'finished' | 'playing' | 'dnf' | 'not_started';
+
 export interface StandingRow {
   userId: string;
   name: string;
   avatarUrl?: string;
-  total: number;
+  total: number;        // strokes over the holes played
   holesPlayed: number;
-  position: number;
+  toPar: number;        // total strokes minus par for the same holes; 0 = "E"
+  position: number | null; // null for DNF / not started (no place in the standings)
+  status: StandingStatus;
 }
 
 export interface LobbyResult {
@@ -184,8 +189,10 @@ export interface LobbyResult {
 }
 
 export interface HistoryEntry extends LobbyResult {
+  myStatus: StandingStatus | 'spectator';
   myPosition: number | null;
   myTotal: number | null;
+  myToPar: number | null;
   playerCount: number;
 }
 

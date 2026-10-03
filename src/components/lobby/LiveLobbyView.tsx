@@ -3,7 +3,9 @@ import { Lobby, LobbyMember } from '../../types';
 import { Scorecard } from './Scorecard';
 import { LobbyLeaderboard } from './LobbyLeaderboard';
 import { LobbyMap } from './LobbyMap';
-import { Trophy, MapPin, Target, Flag, Loader2 } from 'lucide-react';
+import { HostParPanel } from './ParEditor';
+import { getPars } from '../../lib/lobbyScoring';
+import { Trophy, MapPin, Target, Flag, Loader2, ClipboardList } from 'lucide-react';
 
 type Tab = 'scorecard' | 'leaderboard' | 'map';
 
@@ -17,6 +19,8 @@ export function LiveLobbyView({ lobby, members, currentUser, isSpectator, canMan
   busy: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(isSpectator ? 'leaderboard' : 'scorecard');
+  const pars = getPars(lobby);
+  const [showPars, setShowPars] = useState(false);
 
   const TABS: { id: Tab; label: string; icon: any }[] = [
     { id: 'scorecard', label: 'Scorecard', icon: Target },
@@ -42,10 +46,10 @@ export function LiveLobbyView({ lobby, members, currentUser, isSpectator, canMan
       </div>
 
       {tab === 'scorecard' && (
-        <Scorecard lobbyId={lobby.id} holes={lobby.holes} player={currentUser} isSpectator={isSpectator} />
+        <Scorecard lobbyId={lobby.id} holes={lobby.holes} pars={pars} player={currentUser} isSpectator={isSpectator} />
       )}
       {tab === 'leaderboard' && (
-        <LobbyLeaderboard lobbyId={lobby.id} currentUserId={currentUser.uid} />
+        <LobbyLeaderboard lobbyId={lobby.id} holes={lobby.holes} pars={pars} currentUserId={currentUser.uid} />
       )}
       {tab === 'map' && (
         <LobbyMap lobbyId={lobby.id} members={members} currentUserId={currentUser.uid} />
@@ -53,8 +57,21 @@ export function LiveLobbyView({ lobby, members, currentUser, isSpectator, canMan
 
       <div className="text-xs text-slate-400 font-medium flex items-center gap-1.5 justify-center">
         <Flag size={12} />
-        {lobby.holes}-hole round · lowest total wins
+        {lobby.holes}-hole round · par {pars.reduce((a, b) => a + b, 0)} · lowest score to par wins
       </div>
+
+      {canManage && (
+        <div className="space-y-3">
+          <button
+            onClick={() => setShowPars((v) => !v)}
+            className="w-full flex items-center justify-center gap-2 bg-slate-100 text-slate-600 p-3 rounded-xl font-black text-xs uppercase hover:bg-slate-200 transition-colors"
+          >
+            <ClipboardList size={14} />
+            {showPars ? 'Hide course par' : 'Edit course par'}
+          </button>
+          {showPars && <HostParPanel lobby={lobby} />}
+        </div>
+      )}
 
       {canManage && (
         <button

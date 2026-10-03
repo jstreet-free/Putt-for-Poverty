@@ -4,7 +4,7 @@ import {
   limit as fbLimit, onSnapshot, query, serverTimestamp, setDoc, Timestamp,
 } from 'firebase/firestore';
 import { Lobby, LobbyLocation, LobbyMember, Scorecard } from '../types';
-import { apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiStartLobby } from './lobbyApi';
+import { apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiSetLobbyPars, apiStartLobby } from './lobbyApi';
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
@@ -36,14 +36,20 @@ export function generateShareCode(length = 6): string {
 // before start. ---
 
 export async function createLobby(input: {
-  name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18;
+  name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars?: number[];
 }): Promise<{ id: string; shareCode: string | null }> {
   return apiCreateLobby({
     name: input.name,
     isClosed: input.isClosed,
     eventDate: input.eventDate.toISOString(),
     holes: input.holes,
+    pars: input.pars,
   });
+}
+
+export async function setLobbyPars(lobbyId: string, pars: number[]): Promise<number[]> {
+  const result = await apiSetLobbyPars(lobbyId, pars);
+  return result.pars;
 }
 
 export async function joinLobby(input: { lobbyId: string; enteredCode?: string }): Promise<{ ok: true; alreadyMember?: boolean }> {

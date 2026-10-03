@@ -22,8 +22,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return data as T;
 }
 
-export function apiCreateLobby(input: { name: string; isClosed: boolean; eventDate: string; holes: 9 | 18 }) {
+export function apiCreateLobby(input: { name: string; isClosed: boolean; eventDate: string; holes: 9 | 18; pars?: number[] }) {
   return post<{ id: string; shareCode: string | null }>('/api/create-lobby', input);
+}
+
+export function apiSetLobbyPars(lobbyId: string, pars: number[]) {
+  return post<{ ok: true; pars: number[] }>('/api/set-lobby-pars', { lobbyId, pars });
 }
 
 export function apiJoinLobby(input: { lobbyId: string; code?: string }) {
