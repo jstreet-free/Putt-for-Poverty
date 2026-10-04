@@ -1,8 +1,8 @@
-import { verifyCaller } from './_lib/auth';
-import { db, FieldValue, Timestamp } from './_lib/admin';
-import { getActiveLobbyId } from './_lib/lobbies';
-import { HttpError, sendError } from './_lib/http';
-import { DEFAULT_PAR, validatePars } from './_lib/scoring';
+import { verifyCaller } from './_lib/auth.js';
+import { db, FieldValue, Timestamp } from './_lib/admin.js';
+import { getActiveLobbyId } from './_lib/lobbies.js';
+import { HttpError, sendError } from './_lib/http.js';
+import { DEFAULT_PAR, validatePars } from './_lib/scoring.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // excludes ambiguous O/0/I/1
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;

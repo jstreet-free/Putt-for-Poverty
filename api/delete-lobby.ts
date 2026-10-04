@@ -1,6 +1,6 @@
-import { verifyCaller } from './_lib/auth';
-import { db, isAdminCaller } from './_lib/admin';
-import { HttpError, sendError } from './_lib/http';
+import { verifyCaller } from './_lib/auth.js';
+import { db, isAdminCaller } from './_lib/admin.js';
+import { HttpError, sendError } from './_lib/http.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

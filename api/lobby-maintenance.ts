@@ -1,6 +1,6 @@
-import { verifyCaller } from './_lib/auth';
-import { db, isAdminCaller, Timestamp } from './_lib/admin';
-import { finishLobby } from './finish-lobby';
+import { verifyCaller } from './_lib/auth.js';
+import { db, isAdminCaller, Timestamp } from './_lib/admin.js';
+import { finishLobby } from './finish-lobby.js';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 

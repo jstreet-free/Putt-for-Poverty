@@ -1,4 +1,4 @@
-import { db } from './admin';
+import { db } from './admin.js';
 
 // A user may only be in one lobby at a time with status 'scheduled' or
 // 'live' — this is how a single credit is stopped from being used to join

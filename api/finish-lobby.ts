@@ -1,8 +1,8 @@
-import { verifyCaller } from './_lib/auth';
-import { db, Timestamp } from './_lib/admin';
-import { isAdminCaller } from './_lib/admin';
-import { HttpError, sendError } from './_lib/http';
-import { getPars, rankScorecards, tallyStrokes, Tally } from './_lib/scoring';
+import { verifyCaller } from './_lib/auth.js';
+import { db, Timestamp } from './_lib/admin.js';
+import { isAdminCaller } from './_lib/admin.js';
+import { HttpError, sendError } from './_lib/http.js';
+import { getPars, rankScorecards, tallyStrokes, Tally } from './_lib/scoring.js';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 

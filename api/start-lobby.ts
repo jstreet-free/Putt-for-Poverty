@@ -1,7 +1,7 @@
-import { verifyCaller } from './_lib/auth';
-import { db, FieldValue, Timestamp } from './_lib/admin';
-import { isAdminCaller } from './_lib/admin';
-import { HttpError, sendError } from './_lib/http';
+import { verifyCaller } from './_lib/auth.js';
+import { db, FieldValue, Timestamp } from './_lib/admin.js';
+import { isAdminCaller } from './_lib/admin.js';
+import { HttpError, sendError } from './_lib/http.js';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;

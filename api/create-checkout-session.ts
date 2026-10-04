@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
-import { verifyCaller } from './_lib/auth';
-import './_lib/firebaseAdmin'; // ensures the admin app is initialized before verifyCaller() uses it
+import { verifyCaller } from './_lib/auth.js';
+import './_lib/firebaseAdmin.js'; // ensures the admin app is initialized before verifyCaller() uses it
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
