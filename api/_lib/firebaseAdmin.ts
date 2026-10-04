@@ -1,6 +1,16 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import firebaseConfig from '../../firebase-applet-config.json' with { type: 'json' };
+
+// Mirrors firebase-applet-config.json (the client's public config). Hardcoded
+// rather than imported: on Vercel, a function only ships the files its
+// bundler can see, and importing that JSON from here crashed every endpoint
+// that touches Firestore at load time (FUNCTION_INVOCATION_FAILED) while
+// /api/health, which doesn't import it, kept working. If the project ever
+// changes, update both places.
+const firebaseConfig = {
+  projectId: 'gen-lang-client-0416521853',
+  firestoreDatabaseId: 'ai-studio-475ed658-5312-48f4-8175-70e280c700f8',
+};
 
 // Single place every /api file gets its firebase-admin app + Firestore
 // client from — every file used to call initializeApp() independently,

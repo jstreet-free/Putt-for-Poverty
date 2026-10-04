@@ -56,12 +56,23 @@ block them from writing a scorecard or sharing location
 | `users/{uid}/lobbyMemberships/{lobbyId}` | server (create/join); client can `delete` only | index used to find "my active lobby" without a collection-group query |
 | `users/{uid}/history/{lobbyId}` | server (Finish) | one entry per member per finished lobby, including spectators (`myPosition`/`myTotal: null`) — this is what survives lobby deletion |
 
-Ranking (`rankScorecards()`, duplicated in `src/lib/lobbyScoring.ts` for the
-client and `api/_lib/scoring.ts` for the server — keep both in sync) sorts by
-holes played (desc), then total strokes (asc), then name; ties share a
-position. It's the one place that logic lives, so swapping in a different
-scoring format later (Stableford, handicap-adjusted) only means changing
-this function.
+**Scoring is stroke play to par, like a normal tournament.** Each hole has a
+par (default 4; the host can set each hole's par when creating the lobby and
+change it during the event). A player's score is their strokes minus the par
+of the holes they've played, so the leaderboard shows `-3`, `E`, `+5`. The
+lowest score to par wins, and tied players share a position (`T2`).
+
+- **Live:** everyone who has started is ranked on score to par so far, with
+  "thru N" alongside. Players who haven't started sit at the bottom with no
+  place.
+- **Final:** a player who completed every hole is ranked. A player who didn't
+  is a **DNF** and has no place, listed below everyone who finished.
+
+The logic is `rankScorecards()` and `tallyStrokes()`, duplicated in
+`src/lib/lobbyScoring.ts` (client) and `api/_lib/scoring.ts` (server). Keep the
+two identical. `test/scoring.test.ts` pins the behavior down (run with
+`node --import tsx --test test/scoring.test.ts`). Stableford would be a change
+to `rankScorecards()` alone.
 
 ## Server endpoints (`/api`)
 

@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { saveStrokes } from '../../lib/lobbyService';
+import { DEFAULT_PAR, formatToPar, tallyStrokes } from '../../lib/lobbyScoring';
 import { Minus, Plus, Loader2, Eye } from 'lucide-react';
 
 const SAVE_DEBOUNCE_MS = 600;
 
-export function Scorecard({ lobbyId, holes, player, isSpectator }: {
+export function Scorecard({ lobbyId, holes, pars, player, isSpectator }: {
   lobbyId: string;
   holes: 9 | 18;
+  pars: number[];
   player: { uid: string; name: string; avatarUrl?: string };
   isSpectator: boolean;
 }) {
@@ -44,8 +46,9 @@ export function Scorecard({ lobbyId, holes, player, isSpectator }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strokes, loaded, isSpectator]);
 
-  const total = Object.values(strokes).reduce((sum, v) => (Number.isInteger(v) && v > 0 ? sum + v : sum), 0);
-  const holesPlayed = Object.values(strokes).filter(v => Number.isInteger(v) && v > 0).length;
+  const { total, parPlayed, holesPlayed } = tallyStrokes(strokes, pars, holes);
+  const toPar = total - parPlayed;
+  const holePar = pars[activeHole - 1] ?? DEFAULT_PAR;
   const holeNumbers = Array.from({ length: holes }, (_, i) => i + 1);
 
   const setHoleStrokes = (hole: number, value: number) => {
@@ -96,7 +99,7 @@ export function Scorecard({ lobbyId, holes, player, isSpectator }: {
           <Minus size={20} />
         </button>
         <div className="text-center">
-          <div className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Hole {activeHole}</div>
+          <div className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Hole {activeHole} · Par {holePar}</div>
           <div className="text-5xl font-black text-emerald-900">{strokes[String(activeHole)] || '-'}</div>
           <div className="text-[10px] font-bold text-emerald-500 uppercase">Strokes</div>
         </div>
@@ -112,7 +115,7 @@ export function Scorecard({ lobbyId, holes, player, isSpectator }: {
         <span className="text-xs font-bold text-slate-400">{holesPlayed} of {holes} holes played</span>
         <span className="flex items-center gap-2 text-sm font-black text-slate-800">
           {saving && <Loader2 size={14} className="animate-spin text-slate-400" />}
-          Total: {total}
+          {total} strokes · {formatToPar(toPar)}
         </span>
       </div>
     </div>

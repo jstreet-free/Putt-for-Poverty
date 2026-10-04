@@ -18,6 +18,7 @@ import joinLobbyHandler from './api/join-lobby';
 import startLobbyHandler from './api/start-lobby';
 import finishLobbyHandler from './api/finish-lobby';
 import deleteLobbyHandler from './api/delete-lobby';
+import setLobbyParsHandler from './api/set-lobby-pars';
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
@@ -123,6 +124,7 @@ async function startServer() {
   app.post("/api/start-lobby", (req, res) => startLobbyHandler(req, res));
   app.post("/api/finish-lobby", (req, res) => finishLobbyHandler(req, res));
   app.post("/api/delete-lobby", (req, res) => deleteLobbyHandler(req, res));
+  app.post("/api/set-lobby-pars", (req, res) => setLobbyParsHandler(req, res));
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

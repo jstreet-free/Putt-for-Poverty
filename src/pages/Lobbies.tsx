@@ -16,6 +16,9 @@ import {
   lobbyStartMs, startLobby, subscribeToLobby, updateLobby,
 } from '../lib/lobbyService';
 import { LiveLobbyView } from '../components/lobby/LiveLobbyView';
+import { HostParPanel, ParEditor } from '../components/lobby/ParEditor';
+import { StandingsList } from '../components/lobby/StandingsList';
+import { DEFAULT_PAR, formatToPar, getPars } from '../lib/lobbyScoring';
 
 const FIFTEEN_MIN_MS = 15 * 60 * 1000;
 
@@ -151,7 +154,7 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
 
   const selectedLobby = lobbies.find(l => l.id === selectedLobbyId) || null;
 
-  const handleCreateLobby = async (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18 }) => {
+  const handleCreateLobby = async (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars: number[] }) => {
     if (!user || !participant) return;
     setCreateError(null);
     try {
@@ -379,12 +382,14 @@ function LobbyCard({ lobby, memberCount, memberPreview, isMine, onOpen }: {
 
 function CreateLobbyModal({ onClose, onSubmit, error }: {
   onClose: () => void;
-  onSubmit: (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18 }) => Promise<void>;
+  onSubmit: (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars: number[] }) => Promise<void>;
   error: string | null;
 }) {
   const [name, setName] = useState('');
   const [isClosed, setIsClosed] = useState(false);
   const [holes, setHoles] = useState<9 | 18>(18);
+  const [customPar, setCustomPar] = useState(false);
+  const [pars, setPars] = useState<number[]>(() => Array.from({ length: 18 }, () => DEFAULT_PAR));
   const minDate = new Date(Date.now() + 15 * 60 * 1000);
   const [eventDate, setEventDate] = useState(toDatetimeLocalValue(minDate));
   const [saving, setSaving] = useState(false);
@@ -400,7 +405,13 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
     }
     setSaving(true);
     try {
-      await onSubmit({ name: name.trim(), isClosed, eventDate: parsed, holes });
+      await onSubmit({
+        name: name.trim(),
+        isClosed,
+        eventDate: parsed,
+        holes,
+        pars: pars.slice(0, holes),
+      });
     } catch {
       setSaving(false);
     }
@@ -466,6 +477,28 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
             </div>
           </div>
 
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={customPar}
+                onChange={(e) => setCustomPar(e.target.checked)}
+                className="w-5 h-5 accent-emerald-600"
+              />
+              <div>
+                <div className="font-black text-slate-800 text-sm">Set par per hole (optional)</div>
+                <div className="text-xs text-slate-400 font-medium">Leave this off and every hole is par 4. You can change par during the event too.</div>
+              </div>
+            </label>
+            {customPar && (
+              <ParEditor
+                holes={holes}
+                value={pars.slice(0, holes)}
+                onChange={(next) => setPars((prev) => [...next, ...prev.slice(next.length)])}
+              />
+            )}
+          </div>
+
           <label className="flex items-center gap-3 bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 cursor-pointer">
             <input
               type="checkbox"
@@ -493,6 +526,23 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
           </button>
         </form>
       </motion.div>
+    </div>
+  );
+}
+
+function ScheduledParToggle({ lobby }: { lobby: Lobby }) {
+  const [open, setOpen] = useState(false);
+  const pars = getPars(lobby);
+  const total = pars.reduce((a, b) => a + b, 0);
+  return (
+    <div className="space-y-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-center gap-2 bg-slate-100 text-slate-600 p-3 rounded-xl font-black text-xs uppercase hover:bg-slate-200 transition-colors"
+      >
+        {open ? 'Hide course par' : `Course par · ${total} · edit`}
+      </button>
+      {open && <HostParPanel lobby={lobby} />}
     </div>
   );
 }
@@ -788,23 +838,7 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
         {lobby.status === 'finished' && (
           <div className="space-y-4">
             {result ? (
-              <div className="space-y-2">
-                {result.standings.map((row) => (
-                  <div key={row.userId} className="flex items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 font-black text-xs ${
-                        row.position === 1 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'
-                      }`}>
-                        {row.position === 1 ? <Trophy size={13} /> : row.position}
-                      </div>
-                      <div className="font-black text-slate-800 text-sm truncate">
-                        {row.userId === user.uid ? 'You' : row.name}
-                      </div>
-                    </div>
-                    <div className="text-lg font-black text-slate-900 shrink-0">{row.total}</div>
-                  </div>
-                ))}
-              </div>
+              <StandingsList standings={result.standings} currentUserId={user.uid} />
             ) : (
               <div className="text-center py-6 text-slate-400"><Loader2 className="animate-spin mx-auto" size={20} /></div>
             )}
@@ -1003,6 +1037,11 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
                   This lobby's window has passed without being started. No credits were charged, and it will be marked expired shortly.
                 </p>
               </div>
+            )}
+
+            {/* Host: course par (optional; defaults to par 4 per hole) */}
+            {canManage && !isPastExpiry && (
+              <ScheduledParToggle lobby={lobby} />
             )}
 
             {/* Host: start the event */}
