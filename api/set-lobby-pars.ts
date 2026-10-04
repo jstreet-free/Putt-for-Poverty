@@ -1,7 +1,7 @@
-import { verifyCaller } from './_lib/auth';
-import { db, isAdminCaller } from './_lib/admin';
-import { HttpError, sendError } from './_lib/http';
-import { validatePars } from './_lib/scoring';
+import { verifyCaller } from './_lib/auth.js';
+import { db, isAdminCaller } from './_lib/admin.js';
+import { HttpError, sendError } from './_lib/http.js';
+import { validatePars } from './_lib/scoring.js';
 
 // The host can change a hole's par while the lobby is scheduled or live.
 // Routed through the server (not a client write) so the same validation

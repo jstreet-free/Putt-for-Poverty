@@ -1,7 +1,7 @@
-import { verifyCaller } from './_lib/auth';
-import { db, FieldValue } from './_lib/admin';
-import { getActiveLobbyId } from './_lib/lobbies';
-import { HttpError, sendError } from './_lib/http';
+import { verifyCaller } from './_lib/auth.js';
+import { db, FieldValue } from './_lib/admin.js';
+import { getActiveLobbyId } from './_lib/lobbies.js';
+import { HttpError, sendError } from './_lib/http.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

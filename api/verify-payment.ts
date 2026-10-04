@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import Stripe from 'stripe';
-import { verifyCaller } from './_lib/auth';
-import { db } from './_lib/firebaseAdmin';
+import { verifyCaller } from './_lib/auth.js';
+import { db } from './_lib/firebaseAdmin.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {

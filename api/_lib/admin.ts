@@ -1,8 +1,8 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { db } from './firebaseAdmin';
-import { VerifiedCaller } from './auth';
+import { db } from './firebaseAdmin.js';
+import { VerifiedCaller } from './auth.js';
 
-export { db } from './firebaseAdmin';
+export { db } from './firebaseAdmin.js';
 export { FieldValue, Timestamp };
 
 const SPECIAL_ADMIN_EMAIL = 'jstreet@freeatlast.st';
