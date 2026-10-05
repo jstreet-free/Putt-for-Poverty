@@ -121,9 +121,21 @@ function loadCredential() {
 // rebuilt from the base64 alone. The summary describes the key's shape for
 // diagnostics without any of its content.
 function normalizePrivateKey(raw: string): { key: string; summary: string } {
-  const match = /-----BEGIN PRIVATE KEY-----([\s\S]*?)-----END PRIVATE KEY-----/.exec(raw);
+  // The marker lines' spaces and dashes get swapped for line breaks or
+  // look-alike Unicode characters too (same length, so easy to miss).
+  const cleaned = raw
+    .replace(/[‐-―−]/g, '-')
+    .replace(/[  -​ 　﻿]/g, ' ');
+  const match = /-----\s*BEGIN\s+PRIVATE\s+KEY\s*-----([\s\S]*?)-----\s*END\s+PRIVATE\s+KEY\s*-----/.exec(cleaned);
   if (!match) {
-    return { key: raw, summary: `private_key is ${raw.length} chars and lacks the BEGIN/END PRIVATE KEY lines` };
+    const header = cleaned.slice(0, 30).replace(/[A-Za-z0-9+/=]/g, (ch) => (/[BEGINPRVATKY]/.test(ch) ? ch : 'x'));
+    const nonAscii = [...new Set(raw.replace(/[\x20-\x7e\n]/g, ''))]
+      .map((ch) => 'U+' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0'));
+    return {
+      key: raw,
+      summary: `private_key is ${raw.length} chars and lacks the BEGIN/END PRIVATE KEY lines; it starts ${JSON.stringify(header)}` +
+        (nonAscii.length ? `, contains ${nonAscii.join(' ')}` : ''),
+    };
   }
   const body = match[1].replace(/\\[nr]/g, '').replace(/\s+/g, '');
   const unexpected = [...new Set(body.replace(/[A-Za-z0-9+/=]/g, ''))]
