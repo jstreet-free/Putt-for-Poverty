@@ -32,6 +32,42 @@ const firebaseConfig = {
 // part of the key itself.
 export let credentialProblem: string | null = null;
 
+function escapeControlCharsInStrings(text: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString && ch === '\\') {
+      out += ch + (text[++i] ?? '');
+    } else if (ch === '"') {
+      inString = !inString;
+      out += ch;
+    } else if (inString && ch === '\r') {
+      if (text[i + 1] !== '\n') out += '\\n';
+    } else if (inString && ch === '\n') {
+      out += '\\n';
+    } else if (inString && ch < ' ') {
+      out += '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// The parse error plus the text around it with every letter and digit
+// masked, so the shape of the problem shows without revealing key material.
+function describeJsonError(err: unknown, text: string): string {
+  const reason = String(err instanceof Error ? err.message : err)
+    .replace(/"[^"]*"/g, '…')
+    .replace(/'[^']*'/g, '…');
+  const position = Number(/position (\d+)/.exec(reason)?.[1]);
+  if (!Number.isFinite(position)) return reason + '.';
+  const mask = (s: string) => JSON.stringify(s.replace(/[A-Za-z0-9+/=]/g, 'x'));
+  return `${reason}. Around there (letters/digits masked): ${mask(text.slice(Math.max(0, position - 40), position))} ` +
+    `▶${mask(text.slice(position, position + 1))}◀ ${mask(text.slice(position + 1, position + 20))}.`;
+}
+
 function loadCredential() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (!raw || !raw.trim()) {
@@ -49,13 +85,19 @@ function loadCredential() {
   let parsed: any;
   try {
     parsed = JSON.parse(text);
-  } catch (err) {
-    const position = /position (\d+)/.exec(String(err))?.[1];
-    credentialProblem =
-      `FIREBASE_SERVICE_ACCOUNT_KEY is set (${raw.length} chars, starts with ${JSON.stringify(text[0])}) ` +
-      `but is not valid JSON${position ? ` (parse error at position ${position})` : ''}. ` +
-      'It should be the whole key file, starting with { and ending with }.';
-    return undefined;
+  } catch {
+    try {
+      // The private key's "\n" escapes are often turned into real line
+      // breaks on the way into a dashboard, which JSON doesn't allow inside
+      // a string. Re-escape them.
+      parsed = JSON.parse(escapeControlCharsInStrings(text));
+    } catch (err) {
+      credentialProblem =
+        `FIREBASE_SERVICE_ACCOUNT_KEY is set (${raw.length} chars) but is not valid JSON: ` +
+        describeJsonError(err, text) +
+        ' It should be the whole key file, starting with { and ending with }.';
+      return undefined;
+    }
   }
 
   if (parsed?.type !== 'service_account' || !parsed.private_key || !parsed.client_email) {
