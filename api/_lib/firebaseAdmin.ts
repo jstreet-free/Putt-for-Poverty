@@ -26,13 +26,51 @@ const firebaseConfig = {
 //   2. Otherwise, falls back to Application Default Credentials (picks up
 //      GOOGLE_APPLICATION_CREDENTIALS locally, or the platform's own
 //      metadata service on GCP/Cloud Run).
+// Why the key couldn't be used, if it couldn't. Surfaced in error responses
+// (see http.ts) so a misconfigured deployment says what's wrong instead of
+// the generic "Could not load the default credentials". Never contains any
+// part of the key itself.
+export let credentialProblem: string | null = null;
+
 function loadCredential() {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (!raw) return undefined;
+  if (!raw || !raw.trim()) {
+    credentialProblem = 'FIREBASE_SERVICE_ACCOUNT_KEY is not set for this deployment (check the environment it applies to, then redeploy).';
+    return undefined;
+  }
+
+  // Tolerate the usual paste mistakes: surrounding whitespace, and the
+  // quotes .env needs but a dashboard value box must not have.
+  let text = raw.trim();
+  if (text.length > 1 && (text[0] === "'" || text[0] === '"') && text[text.length - 1] === text[0]) {
+    text = text.slice(1, -1).trim();
+  }
+
+  let parsed: any;
   try {
-    return cert(JSON.parse(raw));
+    parsed = JSON.parse(text);
   } catch (err) {
-    console.error('FIREBASE_SERVICE_ACCOUNT_KEY is set but is not valid JSON:', err);
+    const position = /position (\d+)/.exec(String(err))?.[1];
+    credentialProblem =
+      `FIREBASE_SERVICE_ACCOUNT_KEY is set (${raw.length} chars, starts with ${JSON.stringify(text[0])}) ` +
+      `but is not valid JSON${position ? ` (parse error at position ${position})` : ''}. ` +
+      'It should be the whole key file, starting with { and ending with }.';
+    return undefined;
+  }
+
+  if (parsed?.type !== 'service_account' || !parsed.private_key || !parsed.client_email) {
+    credentialProblem = 'FIREBASE_SERVICE_ACCOUNT_KEY is JSON but not a service account key (missing type/private_key/client_email).';
+    return undefined;
+  }
+
+  // Some dashboards store the key's "\n" escapes doubled, which leaves
+  // literal backslash-n in the PEM and makes it unreadable.
+  parsed.private_key = String(parsed.private_key).replace(/\\n/g, '\n');
+
+  try {
+    return cert(parsed);
+  } catch (err) {
+    credentialProblem = `FIREBASE_SERVICE_ACCOUNT_KEY could not be loaded as a credential: ${err instanceof Error ? err.message : String(err)}`;
     return undefined;
   }
 }
