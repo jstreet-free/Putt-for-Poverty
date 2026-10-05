@@ -105,16 +105,35 @@ function loadCredential() {
     return undefined;
   }
 
-  // Some dashboards store the key's "\n" escapes doubled, which leaves
-  // literal backslash-n in the PEM and makes it unreadable.
-  parsed.private_key = String(parsed.private_key).replace(/\\n/g, '\n');
+  const pem = normalizePrivateKey(String(parsed.private_key));
+  parsed.private_key = pem.key;
 
   try {
     return cert(parsed);
   } catch (err) {
-    credentialProblem = `FIREBASE_SERVICE_ACCOUNT_KEY could not be loaded as a credential: ${err instanceof Error ? err.message : String(err)}`;
+    credentialProblem = `FIREBASE_SERVICE_ACCOUNT_KEY could not be loaded as a credential: ${err instanceof Error ? err.message : String(err)} (${pem.summary})`;
     return undefined;
   }
+}
+
+// A PEM key is base64 between two marker lines, so whatever a dashboard did
+// to its line breaks (doubled "\n" escapes, CRLF, indentation), it can be
+// rebuilt from the base64 alone. The summary describes the key's shape for
+// diagnostics without any of its content.
+function normalizePrivateKey(raw: string): { key: string; summary: string } {
+  const match = /-----BEGIN PRIVATE KEY-----([\s\S]*?)-----END PRIVATE KEY-----/.exec(raw);
+  if (!match) {
+    return { key: raw, summary: `private_key is ${raw.length} chars and lacks the BEGIN/END PRIVATE KEY lines` };
+  }
+  const body = match[1].replace(/\\[nr]/g, '').replace(/\s+/g, '');
+  const unexpected = [...new Set(body.replace(/[A-Za-z0-9+/=]/g, ''))]
+    .map((ch) => 'U+' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0'));
+  const lines = body.match(/.{1,64}/g) ?? [];
+  return {
+    key: `-----BEGIN PRIVATE KEY-----\n${lines.join('\n')}\n-----END PRIVATE KEY-----\n`,
+    summary: `private_key is ${raw.length} chars; base64 body is ${body.length} chars` +
+      (unexpected.length ? `, with unexpected characters ${unexpected.join(' ')}` : ''),
+  };
 }
 
 if (!getApps().length) {
