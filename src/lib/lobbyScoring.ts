@@ -14,6 +14,21 @@ export function getPars(lobby: { holes: 9 | 18; pars?: number[] }): number[] {
   return Array.from({ length: lobby.holes }, () => DEFAULT_PAR);
 }
 
+// Players in one event can be at different clubs, so each may have their own
+// par. A malformed one is ignored (the player plays the event's par) rather
+// than trusted.
+export function hasOwnPars(lobby: { holes: 9 | 18 }, member?: { pars?: number[] } | null): boolean {
+  return !!member && member.pars !== undefined && validatePars(member.pars, lobby.holes) === null;
+}
+
+export function getPlayerPars(lobby: { holes: 9 | 18; pars?: number[] }, member?: { pars?: number[] } | null): number[] {
+  return hasOwnPars(lobby, member) ? member!.pars! : getPars(lobby);
+}
+
+export function sumPars(pars: number[]): number {
+  return pars.reduce((sum, p) => sum + p, 0);
+}
+
 export function formatToPar(n: number): string {
   if (n === 0) return 'E';
   return n > 0 ? `+${n}` : `${n}`;
@@ -26,6 +41,8 @@ export interface Tally {
   total: number;      // strokes over the holes played
   parPlayed: number;  // par over those same holes
   holesPlayed: number;
+  coursePar?: number; // set only for a player on their own par
+  clubName?: string;
 }
 
 // Sums one player's strokes, ignoring anything out of range so a malformed
@@ -97,6 +114,8 @@ function toStandingRow(row: Tally & { toPar: number; status: StandingStatus }, p
     toPar: row.toPar,
     position,
     status: row.status,
+    coursePar: row.coursePar,
+    clubName: row.clubName,
   };
 }
 

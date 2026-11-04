@@ -1,22 +1,26 @@
 import { useEffect, useState } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import {
   Users, Lock, Globe, Calendar, Plus, Copy, Share2, LogOut, UserMinus,
   Trash2, X, Loader2, CheckCircle, ShieldCheck, KeyRound, Crown, Flag, ArrowRight,
-  Radio, MapPin, PlayCircle, Trophy, Clock, AlertTriangle,
+  Radio, MapPin, PlayCircle, Trophy, Clock, AlertTriangle, UserPlus, Search,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
-import { Lobby, LobbyMember, LobbyResult } from '../types';
+import { ClubRef, Lobby, LobbyMember, LobbyResult, Participant } from '../types';
 import {
-  createLobby, deleteLobby, finishLobby, getMemberCount, getMemberPreview,
+  addLobbyMember, createLobby, deleteLobby, finishLobby, getMemberCount, getMemberPreview,
   getMyActiveLobby, getShareCode, joinLobby, kickMember, leaveLobby,
   lobbyStartMs, startLobby, subscribeToLobby, updateLobby,
 } from '../lib/lobbyService';
 import { LiveLobbyView } from '../components/lobby/LiveLobbyView';
-import { HostParPanel, ParEditor } from '../components/lobby/ParEditor';
+import { draftFromCourse, HostParPanel, ParEditor } from '../components/lobby/ParEditor';
+import { MyParPanel } from '../components/lobby/MyParPanel';
+import { PlayerParsAdmin } from '../components/lobby/PlayerParsAdmin';
+import { ClubPicker } from '../components/lobby/ClubPicker';
+import { useClubDetection } from '../hooks/useClubDetection';
 import { StandingsList } from '../components/lobby/StandingsList';
 import { DEFAULT_PAR, formatToPar, getPars } from '../lib/lobbyScoring';
 
@@ -154,7 +158,7 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
 
   const selectedLobby = lobbies.find(l => l.id === selectedLobbyId) || null;
 
-  const handleCreateLobby = async (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars: number[] }) => {
+  const handleCreateLobby = async (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars: number[]; club: ClubRef | null }) => {
     if (!user || !participant) return;
     setCreateError(null);
     try {
@@ -227,7 +231,7 @@ export function Lobbies({ user, participant, isAdmin }: LobbiesProps) {
 
       {user && !myActiveLobby && !hasCredit && (
         <div className="bg-amber-50 border-2 border-amber-100 text-amber-700 px-5 py-4 rounded-2xl font-bold text-sm flex items-center gap-2">
-          You need an available round (credit) to create or join a lobby. A credit is charged the moment the host starts the event.
+          You need an available round (credit) to create or join a lobby. A credit is charged the moment the host starts the event (or as soon as you join, if it's already live).
         </div>
       )}
 
@@ -382,7 +386,7 @@ function LobbyCard({ lobby, memberCount, memberPreview, isMine, onOpen }: {
 
 function CreateLobbyModal({ onClose, onSubmit, error }: {
   onClose: () => void;
-  onSubmit: (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars: number[] }) => Promise<void>;
+  onSubmit: (data: { name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars: number[]; club: ClubRef | null }) => Promise<void>;
   error: string | null;
 }) {
   const [name, setName] = useState('');
@@ -390,6 +394,9 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
   const [holes, setHoles] = useState<9 | 18>(18);
   const [customPar, setCustomPar] = useState(false);
   const [pars, setPars] = useState<number[]>(() => Array.from({ length: 18 }, () => DEFAULT_PAR));
+  const [club, setClub] = useState<ClubRef | null>(null);
+  const [clubNote, setClubNote] = useState<string | null>(null);
+  const detection = useClubDetection();
   const minDate = new Date(Date.now() + 15 * 60 * 1000);
   const [eventDate, setEventDate] = useState(toDatetimeLocalValue(minDate));
   const [saving, setSaving] = useState(false);
@@ -411,6 +418,7 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
         eventDate: parsed,
         holes,
         pars: pars.slice(0, holes),
+        club: customPar ? club : null,
       });
     } catch {
       setSaving(false);
@@ -487,15 +495,36 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
               />
               <div>
                 <div className="font-black text-slate-800 text-sm">Set par per hole (optional)</div>
-                <div className="text-xs text-slate-400 font-medium">Leave this off and every hole is par 4. You can change par during the event too.</div>
+                <div className="text-xs text-slate-400 font-medium">Leave this off and every hole is par 4. You can change par during the event too, and each player can set their own if they're at a different club.</div>
               </div>
             </label>
             {customPar && (
-              <ParEditor
-                holes={holes}
-                value={pars.slice(0, holes)}
-                onChange={(next) => setPars((prev) => [...next, ...prev.slice(next.length)])}
-              />
+              <>
+                {/* Built for 18 and sliced, so switching 9/18 afterwards keeps the course's par. */}
+                <ClubPicker
+                  detection={detection}
+                  holes={holes}
+                  selectedId={club?.id ?? null}
+                  onPick={(course) => {
+                    const picked = draftFromCourse(course, 18, Array.from({ length: 18 }, () => DEFAULT_PAR));
+                    setPars(picked.draft.pars);
+                    setClub(picked.draft.club);
+                    setClubNote(picked.note);
+                  }}
+                />
+                {club && (
+                  <div className="flex items-center justify-between gap-2 text-xs font-bold text-slate-600 px-1">
+                    <span className="flex items-center gap-1.5 min-w-0 truncate"><MapPin size={12} className="text-emerald-500 shrink-0" />{club.name}</span>
+                    <button type="button" onClick={() => { setClub(null); setClubNote(null); }} className="text-slate-400 hover:text-slate-600 shrink-0">Clear</button>
+                  </div>
+                )}
+                {clubNote && <p className="text-xs font-bold text-emerald-700 px-1">{clubNote}</p>}
+                <ParEditor
+                  holes={holes}
+                  value={pars.slice(0, holes)}
+                  onChange={(next) => setPars((prev) => [...next, ...prev.slice(next.length)])}
+                />
+              </>
             )}
           </div>
 
@@ -530,6 +559,127 @@ function CreateLobbyModal({ onClose, onSubmit, error }: {
   );
 }
 
+// Host/admin: add a registered player straight into the lobby, no invite
+// code. The server applies the same checks as a self-join (their own credit,
+// no other active lobby) and charges them immediately if the lobby is live.
+// Participants are only fetched once the panel is opened.
+function AddPlayerPanel({ lobby, members }: { lobby: Lobby; members: LobbyMember[] }) {
+  const [open, setOpen] = useState(false);
+  const [participants, setParticipants] = useState<Participant[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [search, setSearch] = useState('');
+  const [addingId, setAddingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const live = lobby.status === 'live';
+
+  useEffect(() => {
+    if (!open || participants) return;
+    getDocs(collection(db, 'participants'))
+      .then((snap) => setParticipants(snap.docs.map(d => ({ id: d.id, ...d.data() } as Participant))))
+      .catch((err) => {
+        console.warn('Could not load players:', err);
+        setLoadError(true);
+      });
+  }, [open, participants]);
+
+  const memberIds = new Set(members.map(m => m.id));
+  const term = search.trim().toLowerCase();
+  const matches = (participants || [])
+    .filter(p => p.name && !memberIds.has(p.id))
+    .filter(p => !term || p.name.toLowerCase().includes(term) || (p.golfClub || '').toLowerCase().includes(term))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 20);
+
+  const handleAdd = async (p: Participant) => {
+    if (live && !confirm(`This event is already live. Adding ${p.name} charges one of their credits right away. Add them?`)) return;
+    setError(null);
+    setNotice(null);
+    setAddingId(p.id);
+    try {
+      await addLobbyMember(lobby.id, p.id);
+      setNotice(`${p.name} added${live ? ' and charged one credit' : ''}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add this player.');
+    } finally {
+      setAddingId(null);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-slate-200 text-slate-600 p-3 rounded-xl font-black text-xs uppercase hover:border-emerald-300 hover:text-emerald-700 transition-colors"
+      >
+        <UserPlus size={14} />
+        Add a Player
+      </button>
+    );
+  }
+
+  return (
+    <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-slate-700 font-black text-xs uppercase tracking-widest">
+          <UserPlus size={14} />
+          Add a Player
+        </div>
+        <button onClick={() => setOpen(false)} className="text-slate-300 hover:text-slate-600 transition-colors">
+          <X size={16} />
+        </button>
+      </div>
+      <p className="text-xs text-slate-400 font-medium">
+        {live
+          ? 'Players need an available credit, which is charged as soon as you add them.'
+          : 'Players need an available credit. It\'s charged when the event starts, like everyone else\'s.'}
+      </p>
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or club"
+          className="w-full bg-white border-2 border-slate-100 rounded-xl p-2.5 pl-9 font-bold text-sm text-slate-900 focus:border-emerald-500 outline-none"
+        />
+      </div>
+      {notice && <p className="text-xs font-bold text-emerald-600">{notice}</p>}
+      {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
+      {loadError ? (
+        <p className="text-xs font-bold text-rose-600">Could not load players.</p>
+      ) : !participants ? (
+        <div className="text-center py-4 text-slate-400"><Loader2 className="animate-spin mx-auto" size={18} /></div>
+      ) : matches.length === 0 ? (
+        <p className="text-xs font-bold text-slate-400 text-center py-2">No matching players.</p>
+      ) : (
+        <div className="space-y-1.5 max-h-64 overflow-y-auto">
+          {matches.map((p) => {
+            const hasCredit = (p.paidRounds || 0) > (p.usedRounds || 0);
+            return (
+              <div key={p.id} className="flex items-center justify-between gap-3 bg-white p-2.5 rounded-xl border-2 border-slate-100">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <MemberAvatar member={{ id: p.id, name: p.name, avatarUrl: p.avatarUrl }} size={32} />
+                  <div className="min-w-0">
+                    <div className="font-black text-slate-800 text-sm truncate">{p.name}</div>
+                    {p.golfClub && <div className="text-[10px] text-slate-400 font-bold uppercase truncate">{p.golfClub}</div>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleAdd(p)}
+                  disabled={!hasCredit || addingId !== null}
+                  className="shrink-0 bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-black text-[10px] uppercase hover:bg-emerald-700 transition-colors disabled:opacity-40"
+                >
+                  {addingId === p.id ? 'Adding...' : hasCredit ? 'Add' : 'No Credit'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScheduledParToggle({ lobby }: { lobby: Lobby }) {
   const [open, setOpen] = useState(false);
   const pars = getPars(lobby);
@@ -540,7 +690,7 @@ function ScheduledParToggle({ lobby }: { lobby: Lobby }) {
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-center gap-2 bg-slate-100 text-slate-600 p-3 rounded-xl font-black text-xs uppercase hover:bg-slate-200 transition-colors"
       >
-        {open ? 'Hide course par' : `Course par · ${total} · edit`}
+        {open ? 'Hide event par' : `Event par · ${total} · edit`}
       </button>
       {open && <HostParPanel lobby={lobby} />}
     </div>
@@ -641,7 +791,7 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
   useEffect(() => {
     if (!canManage) return;
     if (!lobby.isClosed) return;
-    if (lobby.status !== 'scheduled') return;
+    if (lobby.status !== 'scheduled' && lobby.status !== 'live') return;
     getShareCode(lobby.id).then(setShareCode).catch(() => setShareCode(null));
   }, [lobby.id, lobby.isClosed, lobby.status, canManage]);
 
@@ -676,6 +826,7 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
 
   const handleJoin = async () => {
     if (!participant) return;
+    if (lobby.status === 'live' && !confirm('This event is already live. Joining charges one credit right away. Join now?')) return;
     setJoinError(null);
     setBusy(true);
     try {
@@ -773,7 +924,43 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
   };
 
   const startAvailable = now >= canStartWindowOpensAt && !isPastExpiry;
-  const isSpectator = lobby.status === 'live' && myMember?.chargeStatus !== 'charged';
+  const isSpectator = lobby.status === 'live' && !!myMember && myMember.chargeStatus !== 'charged';
+
+  // Creator/admin share panel — shown while scheduled and while live, since
+  // people can still join a private lobby after it starts.
+  const sharePanel = lobby.isClosed && canManage && !isPastExpiry && (
+    <div className="bg-emerald-50 border-2 border-emerald-100 rounded-2xl p-5 space-y-3">
+      <div className="flex items-center gap-2 text-emerald-700 font-black text-xs uppercase tracking-widest">
+        <KeyRound size={14} />
+        Share Code
+      </div>
+      {shareCode ? (
+        <>
+          <div className="text-3xl font-black text-emerald-900 tracking-[0.3em] text-center bg-white rounded-xl p-3 border-2 border-emerald-100">
+            {shareCode}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCopyCode}
+              className="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-emerald-200 text-emerald-700 p-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-100 transition-colors"
+            >
+              {codeCopied ? <CheckCircle size={14} /> : <Copy size={14} />}
+              {codeCopied ? 'Copied!' : 'Copy'}
+            </button>
+            <button
+              onClick={handleShare}
+              className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white p-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-700 transition-colors"
+            >
+              <Share2 size={14} />
+              Share
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="text-sm text-emerald-700 font-bold">Loading code...</div>
+      )}
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -871,12 +1058,39 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
             busy={busy}
           />
         )}
-        {lobby.status === 'live' && !myMember && (
-          <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center space-y-2">
-            <Radio size={24} className="mx-auto text-slate-300" />
-            <p className="text-sm font-bold text-slate-500">This event is already live — you can no longer join.</p>
+        {lobby.status === 'live' && !myMember && !membersLoading && (
+          <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center space-y-3">
+            <Radio size={24} className="mx-auto text-rose-400" />
+            {isPastExpiry ? (
+              <p className="text-sm font-bold text-slate-500">This event's window has ended — it can no longer be joined.</p>
+            ) : (
+              <>
+                <p className="text-sm font-bold text-slate-500">
+                  This event is already live. Join now to start scoring straight away — a credit is charged the moment you join.
+                </p>
+                {lobby.isClosed && (
+                  <input
+                    value={enteredCode}
+                    onChange={(e) => setEnteredCode(e.target.value)}
+                    placeholder="ENTER CODE"
+                    className="w-full text-center tracking-[0.2em] bg-white border-2 border-slate-200 rounded-xl p-3 font-black uppercase text-slate-900 focus:border-emerald-500 outline-none"
+                  />
+                )}
+                {joinError && <p className="text-xs font-bold text-rose-600">{joinError}</p>}
+                <button
+                  onClick={handleJoin}
+                  disabled={busy || !hasCredit || hasOtherActiveLobby || (lobby.isClosed && !enteredCode.trim())}
+                  className="w-full bg-emerald-600 text-white p-3.5 rounded-xl font-black text-sm uppercase hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {hasOtherActiveLobby ? "You're already in another lobby" : !hasCredit ? 'Need a Credit to Join' : busy ? 'Joining...' : lobby.isClosed ? 'Join with Code' : 'Join Live Event'}
+                </button>
+              </>
+            )}
           </div>
         )}
+        {lobby.status === 'live' && sharePanel}
+        {lobby.status === 'live' && canManage && !isPastExpiry && <AddPlayerPanel lobby={lobby} members={members} />}
+        {lobby.status === 'live' && isAdmin && !isPastExpiry && <PlayerParsAdmin lobby={lobby} members={members} />}
 
         {/* --- Scheduled: the normal management view --- */}
         {lobby.status === 'scheduled' && (
@@ -911,40 +1125,7 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
               </div>
             )}
 
-            {/* Creator/admin share panel */}
-            {lobby.isClosed && canManage && (
-              <div className="bg-emerald-50 border-2 border-emerald-100 rounded-2xl p-5 space-y-3">
-                <div className="flex items-center gap-2 text-emerald-700 font-black text-xs uppercase tracking-widest">
-                  <KeyRound size={14} />
-                  Share Code
-                </div>
-                {shareCode ? (
-                  <>
-                    <div className="text-3xl font-black text-emerald-900 tracking-[0.3em] text-center bg-white rounded-xl p-3 border-2 border-emerald-100">
-                      {shareCode}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleCopyCode}
-                        className="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-emerald-200 text-emerald-700 p-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-100 transition-colors"
-                      >
-                        {codeCopied ? <CheckCircle size={14} /> : <Copy size={14} />}
-                        {codeCopied ? 'Copied!' : 'Copy'}
-                      </button>
-                      <button
-                        onClick={handleShare}
-                        className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white p-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-700 transition-colors"
-                      >
-                        <Share2 size={14} />
-                        Share
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-sm text-emerald-700 font-bold">Loading code...</div>
-                )}
-              </div>
-            )}
+            {sharePanel}
 
             {/* Roster / join */}
             <div className="space-y-3">
@@ -1027,6 +1208,8 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
               )}
             </div>
 
+            {canManage && !isPastExpiry && <AddPlayerPanel lobby={lobby} members={members} />}
+
             {/* This lobby's window has passed without anyone starting it —
                 still shown as 'scheduled' until the daily maintenance job
                 flips it to 'expired', but there's nothing left to do here. */}
@@ -1039,10 +1222,17 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
               </div>
             )}
 
-            {/* Host: course par (optional; defaults to par 4 per hole) */}
+            {/* Player: their own par, if they'll be at a different club */}
+            {myMember && !isPastExpiry && (
+              <MyParPanel lobby={lobby} member={myMember} autoDetect={false} />
+            )}
+
+            {/* Host: event par (optional; defaults to par 4 per hole) */}
             {canManage && !isPastExpiry && (
               <ScheduledParToggle lobby={lobby} />
             )}
+
+            {isAdmin && !isPastExpiry && <PlayerParsAdmin lobby={lobby} members={members} />}
 
             {/* Host: start the event */}
             {canManage && !isPastExpiry && (

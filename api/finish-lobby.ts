@@ -2,7 +2,7 @@ import { verifyCaller } from './_lib/auth.js';
 import { db, Timestamp } from './_lib/admin.js';
 import { isAdminCaller } from './_lib/admin.js';
 import { HttpError, sendError } from './_lib/http.js';
-import { getPars, rankScorecards, tallyStrokes, Tally } from './_lib/scoring.js';
+import { getPars, getPlayerPars, hasOwnPars, rankScorecards, sumPars, tallyStrokes, Tally } from './_lib/scoring.js';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -22,19 +22,25 @@ export async function finishLobby(lobbyId: string): Promise<{ standingsCount: nu
     const scorecardByUid = new Map(scorecardsSnap.docs.map((d) => [d.id, d.data()]));
 
     const chargedMembers = membersSnap.docs.filter((d) => d.data().chargeStatus === 'charged');
-    const pars = getPars(lobby as { holes: 9 | 18; pars?: number[] });
+    const typedLobby = lobby as { holes: 9 | 18; pars?: number[] };
+    const pars = getPars(typedLobby);
 
     // Never trust client-computed totals — recompute from raw per-hole
-    // strokes, using the lobby's pars as they stand at finish.
+    // strokes, using each player's par as it stands at finish (their own if
+    // they set one for the club they played, otherwise the lobby's).
     const tallies: Tally[] = chargedMembers.map((memberDoc) => {
       const member = memberDoc.data();
       const card = scorecardByUid.get(memberDoc.id);
       const strokes = card?.strokes && typeof card.strokes === 'object' ? card.strokes : {};
+      const playerPars = getPlayerPars(typedLobby, member);
+      const ownPar = hasOwnPars(typedLobby, member);
       return {
         userId: memberDoc.id,
         name: member.name,
         ...(member.avatarUrl ? { avatarUrl: member.avatarUrl } : {}),
-        ...tallyStrokes(strokes, pars, lobby.holes),
+        ...(ownPar ? { coursePar: sumPars(playerPars) } : {}),
+        ...(ownPar && member.club?.name ? { clubName: member.club.name } : {}),
+        ...tallyStrokes(strokes, playerPars, lobby.holes),
       };
     });
 

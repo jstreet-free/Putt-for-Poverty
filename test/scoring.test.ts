@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rankScorecards, tallyStrokes, getPars, validatePars, Tally } from '../api/_lib/scoring';
+import { rankScorecards, tallyStrokes, getPars, getPlayerPars, hasOwnPars, validatePars, Tally } from '../api/_lib/scoring';
 
 const PAR4_9 = Array.from({ length: 9 }, () => 4);
 
@@ -107,4 +107,34 @@ test('validatePars rejects wrong length and out-of-range values', () => {
   assert.ok(validatePars([4, 4], 9));
   assert.ok(validatePars([4, 4, 4, 4, 4, 4, 4, 4, 9], 9));
   assert.ok(validatePars([4, 4, 4, 4, 4, 4, 4, 4, 4.5], 9));
+});
+
+test("a player's own par wins over the event's; a malformed one is ignored", () => {
+  const lobby = { holes: 9 as const, pars: PAR4_9 };
+  const own = [3, 4, 5, 3, 4, 5, 3, 4, 5];
+  assert.deepEqual(getPlayerPars(lobby, { pars: own }), own);
+  assert.equal(hasOwnPars(lobby, { pars: own }), true);
+  assert.deepEqual(getPlayerPars(lobby, {}), PAR4_9);
+  assert.deepEqual(getPlayerPars(lobby, null), PAR4_9);
+  assert.deepEqual(getPlayerPars(lobby, { pars: [3, 3] }), PAR4_9);           // wrong length
+  assert.deepEqual(getPlayerPars(lobby, { pars: Array(9).fill(9) }), PAR4_9); // out of range
+  assert.equal(hasOwnPars(lobby, { pars: [3, 3] }), false);
+});
+
+test('players at different clubs are ranked on score to their own par', () => {
+  // Same 36 strokes each. Hill's club is par 36, Vale's is par 32.
+  const hill = card('Hill', Array(9).fill(4), PAR4_9);                    // E
+  const vale = card('Vale', Array(9).fill(4), [3, 4, 3, 4, 3, 4, 3, 4, 4]); // +4
+  const rows = rankScorecards([vale, hill], 9, 'final');
+  assert.equal(rows[0].name, 'Hill');
+  assert.equal(rows[0].toPar, 0);
+  assert.equal(rows[1].name, 'Vale');
+  assert.equal(rows[1].toPar, 4);
+});
+
+test('club and course par pass through to the standings when set', () => {
+  const t = { ...card('Ann', Array(9).fill(4)), coursePar: 36, clubName: 'Old Course' };
+  const [row] = rankScorecards([t], 9, 'final');
+  assert.equal(row.coursePar, 36);
+  assert.equal(row.clubName, 'Old Course');
 });

@@ -1,6 +1,6 @@
 import { StandingRow } from '../../types';
 import { formatToPar } from '../../lib/lobbyScoring';
-import { Trophy } from 'lucide-react';
+import { MapPin, Trophy } from 'lucide-react';
 
 // Final (or live) standings in tournament form: position (T for ties), name,
 // total strokes, and score to par. DNF players have no position and sit
@@ -41,6 +41,12 @@ export function StandingsList({ standings, currentUserId }: {
                 <div className="text-[10px] text-slate-400 font-bold uppercase">
                   {isDnf ? `DNF · ${row.holesPlayed ?? 0} holes` : `${row.total} strokes`}
                 </div>
+                {row.coursePar !== undefined && (
+                  <div className="text-[10px] text-emerald-600 font-bold uppercase flex items-center gap-1 truncate">
+                    <MapPin size={9} className="shrink-0" />
+                    {row.clubName || 'Own par'} · par {row.coursePar}
+                  </div>
+                )}
               </div>
             </div>
             {row.toPar !== undefined && !isDnf && (

@@ -14,6 +14,8 @@ export interface StandingRowLike {
   toPar: number;
   position: number | null;
   status: StandingStatus;
+  coursePar?: number;
+  clubName?: string;
 }
 
 export const DEFAULT_PAR = 4;
@@ -25,6 +27,18 @@ export function getPars(lobby: { holes: 9 | 18; pars?: number[] }): number[] {
   return Array.from({ length: lobby.holes }, () => DEFAULT_PAR);
 }
 
+export function hasOwnPars(lobby: { holes: 9 | 18 }, member?: { pars?: number[] } | null): boolean {
+  return !!member && member.pars !== undefined && validatePars(member.pars, lobby.holes) === null;
+}
+
+export function getPlayerPars(lobby: { holes: 9 | 18; pars?: number[] }, member?: { pars?: number[] } | null): number[] {
+  return hasOwnPars(lobby, member) ? member!.pars! : getPars(lobby);
+}
+
+export function sumPars(pars: number[]): number {
+  return pars.reduce((sum, p) => sum + p, 0);
+}
+
 export interface Tally {
   userId: string;
   name: string;
@@ -32,6 +46,8 @@ export interface Tally {
   total: number;
   parPlayed: number;
   holesPlayed: number;
+  coursePar?: number;
+  clubName?: string;
 }
 
 export function tallyStrokes(strokes: Record<string, number>, pars: number[], holes: number) {
@@ -94,6 +110,8 @@ function toStandingRow(row: Tally & { toPar: number; status: StandingStatus }, p
     toPar: row.toPar,
     position,
     status: row.status,
+    coursePar: row.coursePar,
+    clubName: row.clubName,
   };
 }
 

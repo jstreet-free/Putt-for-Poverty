@@ -30,6 +30,12 @@ something fails partway (the whole charge-and-transition is one Firestore
 transaction — either every member gets resolved and the lobby goes live, or
 none of it happens).
 
+**The one exception is joining a lobby that's already live.** Start has
+already run, so `join-lobby` charges the late joiner itself, in the same
+transaction that writes their member doc (`chargeStatus: 'charged'`).
+Joining needs an available credit anyway, so a late joiner is never a
+spectator. A lobby stays joinable, scheduled or live, until its `expiresAt`.
+
 **A user may be in only one lobby with status `scheduled` or `live` at a
 time.** `api/_lib/lobbies.ts`'s `getActiveLobbyId()` enforces this on both
 create and join by reading the user's own membership index
@@ -47,9 +53,9 @@ block them from writing a scorecard or sharing location
 
 | Path | Written by | Notes |
 |---|---|---|
-| `lobbies/{id}` | server (create/start/finish/maintenance); client (host editing `name`/`isClosed`/`eventDate` while `scheduled`) | `status`, `holes`, `expiresAt`, `startedAt`, `finishedAt` |
+| `lobbies/{id}` | server (create/start/finish/maintenance/set-pars); client (host editing `name`/`isClosed`/`eventDate` while `scheduled`) | `status`, `holes`, `pars`, `club`, `expiresAt`, `startedAt`, `finishedAt` |
 | `lobbies/{id}/secret/join` | client (host, only while `scheduled`) | invite code for closed lobbies; only the creator/admin can ever read it back |
-| `lobbies/{id}/members/{uid}` | server (join/create); client can `delete` only (leave/kick, only while `scheduled`) | `chargeStatus` set at Start |
+| `lobbies/{id}/members/{uid}` | server (join/add/create/set-pars); client can `delete` only (leave/kick, only while `scheduled`) | `chargeStatus` set at Start, or at join for a late joiner; `pars`/`club` only if the player set their own par |
 | `lobbies/{id}/locations/{uid}` | client (the player themself, only while `live` and charged) | live GPS, rounded to ~1m, one write per 15s/10m of movement |
 | `lobbies/{id}/scorecards/{uid}` | client (the player themself, only while `live` and charged) | raw per-hole strokes; `total`/`holesPlayed` recomputed authoritatively server-side at Finish, never trusted from the client |
 | `lobbies/{id}/results/final` | server (Finish) | the archived, ranked standings |
@@ -62,17 +68,47 @@ change it during the event). A player's score is their strokes minus the par
 of the holes they've played, so the leaderboard shows `-3`, `E`, `+5`. The
 lowest score to par wins, and tied players share a position (`T2`).
 
+**Each player can have their own par.** Players in one event may be at
+different clubs, so the lobby's `pars` is only the *event* par — what anyone
+without their own plays to. A player can set their own on their member doc
+(`pars` + `club`), which only changes their card; they're scored on it live
+and at Finish (`getPlayerPars()`), and the leaderboard shows the club and par
+next to their name so it's visible to everyone. Who can change what (all via
+`set-lobby-pars`, while `scheduled` or `live`):
+
+- **The player** — their own par, or drop it to go back to the event's.
+- **The host** — the event par. Players on their own par keep it.
+- **An admin** — any player's par, and **Apply to everyone**, which sets the
+  event par and clears every player's own in one batch. The admin panel
+  ("Players' par") shows on the lobby whether or not the admin is playing.
+
+**Finding the club from the player's location.** `src/lib/clubLocator.ts`
+takes the browser's position and asks OpenStreetMap's Overpass API (one
+request, with a mirror as fallback) for the `leisure=golf_course` areas the
+player is inside or within 1.5 km of, plus each course's `golf=hole` ways
+(`ref` = hole number, `par`). A resort mapped as one area with several
+courses is split by the holes' `golf:course:name`. The course's par fills
+the editor; holes the map has no par for keep the current value, and the UI
+says how many holes came from the map, because coverage varies (e.g. St
+Andrews' Old Course and the Belfry's Brabazon are fully mapped, while the
+Belfry's PGA National has its holes but no pars). During a live event the
+player's panel looks the club up on its own and, if its par differs from
+theirs, offers it in one tap. It's never applied silently, because their
+score to par would jump mid-round. The host gets the same "Find my club"
+button for the event par, including when creating a lobby.
+
 - **Live:** everyone who has started is ranked on score to par so far, with
   "thru N" alongside. Players who haven't started sit at the bottom with no
   place.
 - **Final:** a player who completed every hole is ranked. A player who didn't
   is a **DNF** and has no place, listed below everyone who finished.
 
-The logic is `rankScorecards()` and `tallyStrokes()`, duplicated in
+The logic is `rankScorecards()`, `tallyStrokes()` and `getPlayerPars()`, duplicated in
 `src/lib/lobbyScoring.ts` (client) and `api/_lib/scoring.ts` (server). Keep the
 two identical. `test/scoring.test.ts` pins the behavior down (run with
-`node --import tsx --test test/scoring.test.ts`). Stableford would be a change
-to `rankScorecards()` alone.
+`node --import tsx --test test/scoring.test.ts`; `test/clubLocator.test.ts`
+covers reading courses and pars out of an Overpass response). Stableford would
+be a change to `rankScorecards()` alone.
 
 ## Server endpoints (`/api`)
 
@@ -84,7 +120,18 @@ failure with a real status code.
   they have no other active lobby; writes the lobby + creator's member doc +
   membership index entry (+ invite code if closed) in one batch.
 - **`join-lobby`** — same validation, plus the invite code check for closed
-  lobbies; no-ops (200) if already a member.
+  lobbies; no-ops (200) if already a member. Works while `scheduled` or
+  `live` (until `expiresAt`); joining a `live` lobby charges the credit
+  immediately, in one transaction with the member write.
+- **`add-lobby-member`** — the host (or an admin) adds a registered player
+  directly, no invite code. Shares `addPlayerToLobby()` in
+  `api/_lib/lobbies.ts` with `join-lobby`, so the player still needs their
+  own available credit and no other active lobby, and is charged at once if
+  the lobby is `live`.
+- **`set-lobby-pars`** — every par change, by `target`: `'event'` (host or
+  admin), `'player'` (that player, or an admin; `pars: null` drops it) and
+  `'everyone'` (admin only). An optional `club` (`{ id, name }`) records
+  which course the par came from.
 - **`start-lobby`** — one Firestore transaction: reads the lobby, every
   member, and every member's participant doc; charges (`usedRounds +1`) or
   marks each member; flips the lobby to `live`. Only the host or an admin,

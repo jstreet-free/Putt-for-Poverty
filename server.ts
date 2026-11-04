@@ -15,6 +15,7 @@ import { db } from './api/_lib/firebaseAdmin';
 import lobbyMaintenanceHandler from './api/lobby-maintenance';
 import createLobbyHandler from './api/create-lobby';
 import joinLobbyHandler from './api/join-lobby';
+import addLobbyMemberHandler from './api/add-lobby-member';
 import startLobbyHandler from './api/start-lobby';
 import finishLobbyHandler from './api/finish-lobby';
 import deleteLobbyHandler from './api/delete-lobby';
@@ -121,6 +122,7 @@ async function startServer() {
   app.all("/api/lobby-maintenance", (req, res) => lobbyMaintenanceHandler(req, res));
   app.post("/api/create-lobby", (req, res) => createLobbyHandler(req, res));
   app.post("/api/join-lobby", (req, res) => joinLobbyHandler(req, res));
+  app.post("/api/add-lobby-member", (req, res) => addLobbyMemberHandler(req, res));
   app.post("/api/start-lobby", (req, res) => startLobbyHandler(req, res));
   app.post("/api/finish-lobby", (req, res) => finishLobbyHandler(req, res));
   app.post("/api/delete-lobby", (req, res) => deleteLobbyHandler(req, res));
