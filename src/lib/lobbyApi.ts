@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { ClubRef } from '../types';
 
 // Thin client for the server-side lobby endpoints. Every lobby action that
 // touches credits, membership, or lifecycle status goes through one of these
@@ -22,16 +23,27 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return data as T;
 }
 
-export function apiCreateLobby(input: { name: string; isClosed: boolean; eventDate: string; holes: 9 | 18; pars?: number[] }) {
+export function apiCreateLobby(input: { name: string; isClosed: boolean; eventDate: string; holes: 9 | 18; pars?: number[]; club?: ClubRef | null }) {
   return post<{ id: string; shareCode: string | null }>('/api/create-lobby', input);
 }
 
-export function apiSetLobbyPars(lobbyId: string, pars: number[]) {
-  return post<{ ok: true; pars: number[] }>('/api/set-lobby-pars', { lobbyId, pars });
+// See api/set-lobby-pars.ts for what each target means and who may use it.
+export function apiSetLobbyPars(input: {
+  lobbyId: string;
+  target: 'event' | 'player' | 'everyone';
+  pars: number[] | null;
+  userId?: string;
+  club?: ClubRef | null;
+}) {
+  return post<{ ok: true }>('/api/set-lobby-pars', input);
 }
 
 export function apiJoinLobby(input: { lobbyId: string; code?: string }) {
-  return post<{ ok: true; alreadyMember?: boolean }>('/api/join-lobby', input);
+  return post<{ ok: true; alreadyMember?: boolean; charged?: boolean }>('/api/join-lobby', input);
+}
+
+export function apiAddLobbyMember(input: { lobbyId: string; userId: string }) {
+  return post<{ ok: true; alreadyMember: boolean; charged: boolean }>('/api/add-lobby-member', input);
 }
 
 export function apiStartLobby(lobbyId: string) {

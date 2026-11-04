@@ -1,6 +1,7 @@
 import { verifyCaller } from './_lib/auth.js';
 import { db, FieldValue, Timestamp } from './_lib/admin.js';
 import { getActiveLobbyId } from './_lib/lobbies.js';
+import { parseClub } from './_lib/clubs.js';
 import { HttpError, sendError } from './_lib/http.js';
 import { DEFAULT_PAR, validatePars } from './_lib/scoring.js';
 
@@ -24,7 +25,7 @@ export default async function handler(req: any, res: any) {
     const caller = await verifyCaller(req);
     if (!caller) throw new HttpError(401, 'Unauthorized');
 
-    const { name, isClosed, eventDate, holes, pars: requestedPars } = req.body || {};
+    const { name, isClosed, eventDate, holes, pars: requestedPars, club: rawClub } = req.body || {};
 
     if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 99) {
       throw new HttpError(400, 'Lobby name must be 1-99 characters.');
@@ -41,6 +42,7 @@ export default async function handler(req: any, res: any) {
       : requestedPars;
     const parError = validatePars(pars, holes);
     if (parError) throw new HttpError(400, parError);
+    const club = parseClub(rawClub);
     const parsedDate = new Date(eventDate);
     if (isNaN(parsedDate.getTime()) || parsedDate.getTime() <= Date.now()) {
       throw new HttpError(400, 'eventDate must be a valid date in the future.');
@@ -72,6 +74,7 @@ export default async function handler(req: any, res: any) {
       eventDate: eventTimestamp,
       holes,
       pars,
+      ...(club ? { club } : {}),
       creatorId: caller.uid,
       creatorName: participant.name,
       status: 'scheduled',

@@ -126,6 +126,13 @@ export interface AdminWarning {
 
 export type LobbyStatus = 'scheduled' | 'live' | 'finished' | 'expired';
 
+// A golf course a par was taken from, as found from the player's location
+// (see src/lib/clubLocator.ts). `id` is stable per OpenStreetMap course.
+export interface ClubRef {
+  id: string;
+  name: string;
+}
+
 export interface Lobby {
   id: string;
   name: string;
@@ -135,6 +142,7 @@ export interface Lobby {
   eventDate: any; // Firestore Timestamp
   holes: 9 | 18;
   pars?: number[]; // one per hole; missing on lobbies created before pars existed (treated as all 4s)
+  club?: ClubRef | null; // the course the event's par came from, if it was looked up
   status: LobbyStatus;
   startedAt?: any;
   finishedAt?: any;
@@ -152,6 +160,10 @@ export interface LobbyMember {
   joinedAt: any;
   chargeStatus?: 'charged' | 'insufficient_credit' | 'no_participant_record';
   chargedAt?: any;
+  // The player's own par, for when they're playing a different club from the
+  // rest of the event. Missing = they play to the lobby's pars.
+  pars?: number[];
+  club?: ClubRef | null; // where that par came from (today's course, not their home golfClub)
 }
 
 export interface Scorecard {
@@ -176,6 +188,8 @@ export interface StandingRow {
   toPar: number;        // total strokes minus par for the same holes; 0 = "E"
   position: number | null; // null for DNF / not started (no place in the standings)
   status: StandingStatus;
+  coursePar?: number;   // only set for a player on their own par: its total
+  clubName?: string;    // ...and the club it came from, if known
 }
 
 export interface LobbyResult {

@@ -3,8 +3,8 @@ import {
   collection, doc, deleteDoc, getDoc, getDocs, getCountFromServer,
   limit as fbLimit, onSnapshot, query, serverTimestamp, setDoc, Timestamp,
 } from 'firebase/firestore';
-import { Lobby, LobbyLocation, LobbyMember, Scorecard } from '../types';
-import { apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiSetLobbyPars, apiStartLobby } from './lobbyApi';
+import { ClubRef, Lobby, LobbyLocation, LobbyMember, Scorecard } from '../types';
+import { apiAddLobbyMember, apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiSetLobbyPars, apiStartLobby } from './lobbyApi';
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
@@ -36,7 +36,7 @@ export function generateShareCode(length = 6): string {
 // before start. ---
 
 export async function createLobby(input: {
-  name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars?: number[];
+  name: string; isClosed: boolean; eventDate: Date; holes: 9 | 18; pars?: number[]; club?: ClubRef | null;
 }): Promise<{ id: string; shareCode: string | null }> {
   return apiCreateLobby({
     name: input.name,
@@ -44,16 +44,33 @@ export async function createLobby(input: {
     eventDate: input.eventDate.toISOString(),
     holes: input.holes,
     pars: input.pars,
+    club: input.club,
   });
 }
 
-export async function setLobbyPars(lobbyId: string, pars: number[]): Promise<number[]> {
-  const result = await apiSetLobbyPars(lobbyId, pars);
-  return result.pars;
+// The event's par: what every player who hasn't set their own plays to.
+// Passing `club` undefined leaves the stored club alone; null clears it.
+export async function setLobbyPars(lobbyId: string, pars: number[], club?: ClubRef | null): Promise<void> {
+  await apiSetLobbyPars({ lobbyId, target: 'event', pars, club });
 }
 
-export async function joinLobby(input: { lobbyId: string; enteredCode?: string }): Promise<{ ok: true; alreadyMember?: boolean }> {
+// One player's own par (themself, or any player if the caller is an admin).
+// `pars: null` puts them back on the event's par.
+export async function setPlayerPars(lobbyId: string, userId: string, pars: number[] | null, club?: ClubRef | null): Promise<void> {
+  await apiSetLobbyPars({ lobbyId, target: 'player', userId, pars, club });
+}
+
+// Admin only: one par for the whole event, replacing every player's own.
+export async function applyParsToEveryone(lobbyId: string, pars: number[], club?: ClubRef | null): Promise<void> {
+  await apiSetLobbyPars({ lobbyId, target: 'everyone', pars, club });
+}
+
+export async function joinLobby(input: { lobbyId: string; enteredCode?: string }): Promise<{ ok: true; alreadyMember?: boolean; charged?: boolean }> {
   return apiJoinLobby({ lobbyId: input.lobbyId, code: input.enteredCode });
+}
+
+export async function addLobbyMember(lobbyId: string, userId: string): Promise<{ alreadyMember: boolean; charged: boolean }> {
+  return apiAddLobbyMember({ lobbyId, userId });
 }
 
 export async function startLobby(lobbyId: string): Promise<{ charged: number; skipped: number }> {

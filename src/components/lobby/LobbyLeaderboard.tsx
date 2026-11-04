@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Scorecard } from '../../types';
+import { Lobby, LobbyMember, Scorecard } from '../../types';
 import { subscribeToScorecards } from '../../lib/lobbyService';
-import { formatToPar, rankScorecards, tallyStrokes } from '../../lib/lobbyScoring';
-import { Trophy } from 'lucide-react';
+import { formatToPar, getPlayerPars, hasOwnPars, rankScorecards, sumPars, tallyStrokes } from '../../lib/lobbyScoring';
+import { MapPin, Trophy } from 'lucide-react';
 
-export function LobbyLeaderboard({ lobbyId, holes, pars, currentUserId }: {
-  lobbyId: string;
-  holes: 9 | 18;
-  pars: number[];
+// Each player is ranked on their own par (players in one event can be at
+// different clubs), so a score to par compares fairly across courses.
+export function LobbyLeaderboard({ lobby, members, currentUserId }: {
+  lobby: Lobby;
+  members: LobbyMember[];
   currentUserId: string;
 }) {
+  const lobbyId = lobby.id;
+  const holes = lobby.holes;
   const [cards, setCards] = useState<Scorecard[]>([]);
 
   useEffect(() => {
@@ -20,14 +23,22 @@ export function LobbyLeaderboard({ lobbyId, holes, pars, currentUserId }: {
   }, [lobbyId]);
 
   const standings = useMemo(() => {
-    const tallies = cards.map((card) => ({
-      userId: card.userId,
-      name: card.name,
-      avatarUrl: card.avatarUrl,
-      ...tallyStrokes(card.strokes || {}, pars, holes),
-    }));
+    const memberById = new Map(members.map((m) => [m.id, m]));
+    const tallies = cards.map((card) => {
+      const member = memberById.get(card.userId);
+      const pars = getPlayerPars(lobby, member);
+      const ownPar = hasOwnPars(lobby, member);
+      return {
+        userId: card.userId,
+        name: card.name,
+        avatarUrl: card.avatarUrl,
+        coursePar: ownPar ? sumPars(pars) : undefined,
+        clubName: ownPar ? member?.club?.name : undefined,
+        ...tallyStrokes(card.strokes || {}, pars, holes),
+      };
+    });
     return rankScorecards(tallies, holes, 'live');
-  }, [cards, pars, holes]);
+  }, [cards, lobby, members, holes]);
 
   // A shared position (T2) is shown with a "T" prefix, as on a real board.
   const tiedPositions = useMemo(() => {
@@ -75,6 +86,12 @@ export function LobbyLeaderboard({ lobbyId, holes, pars, currentUserId }: {
                   {isMe ? 'You' : row.name}
                 </div>
                 <div className="text-[10px] text-slate-400 font-bold uppercase">{thru} · {row.total} strokes</div>
+                {row.coursePar !== undefined && (
+                  <div className="text-[10px] text-emerald-600 font-bold uppercase flex items-center gap-1 truncate">
+                    <MapPin size={9} className="shrink-0" />
+                    {row.clubName || 'Own par'} · par {row.coursePar}
+                  </div>
+                )}
               </div>
             </div>
             <div className={`text-lg font-black shrink-0 ${
