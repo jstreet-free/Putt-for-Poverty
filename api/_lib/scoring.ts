@@ -39,6 +39,11 @@ export function sumPars(pars: number[]): number {
   return pars.reduce((sum, p) => sum + p, 0);
 }
 
+export function formatToPar(n: number): string {
+  if (n === 0) return 'E';
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
 export interface Tally {
   userId: string;
   name: string;

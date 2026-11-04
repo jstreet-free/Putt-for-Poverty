@@ -54,6 +54,10 @@ export function apiFinishLobby(lobbyId: string) {
   return post<{ standingsCount: number }>('/api/finish-lobby', { lobbyId });
 }
 
+export function apiNotifyLobby(lobbyId: string) {
+  return post<{ ok: true }>('/api/lobby-notifications', { lobbyId });
+}
+
 export function apiDeleteLobby(lobbyId: string) {
   return post<{ ok: true }>('/api/delete-lobby', { lobbyId });
 }

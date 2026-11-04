@@ -59,8 +59,10 @@ block them from writing a scorecard or sharing location
 | `lobbies/{id}/locations/{uid}` | client (the player themself, only while `live` and charged) | live GPS, rounded to ~1m, one write per 15s/10m of movement |
 | `lobbies/{id}/scorecards/{uid}` | client (the player themself, only while `live` and charged) | raw per-hole strokes; `total`/`holesPlayed` recomputed authoritatively server-side at Finish, never trusted from the client |
 | `lobbies/{id}/results/final` | server (Finish) | the archived, ranked standings |
+| `lobbies/{id}/notifications/state` | server (`lobby-notifications`) | per player: what was last announced, when their score last changed, which quiet spell was already reminded about |
 | `users/{uid}/lobbyMemberships/{lobbyId}` | server (create/join); client can `delete` only | index used to find "my active lobby" without a collection-group query |
 | `users/{uid}/history/{lobbyId}` | server (Finish) | one entry per member per finished lobby, including spectators (`myPosition`/`myTotal: null`) — this is what survives lobby deletion |
+| `pushTokens/{fcmToken}` | client (write only, under their own uid); read by the server | one doc per device, owned by whoever signed in on it last |
 
 **Scoring is stroke play to par, like a normal tournament.** Each hole has a
 par (default 4; the host can set each hole's par when creating the lobby and
@@ -107,7 +109,8 @@ The logic is `rankScorecards()`, `tallyStrokes()` and `getPlayerPars()`, duplica
 `src/lib/lobbyScoring.ts` (client) and `api/_lib/scoring.ts` (server). Keep the
 two identical. `test/scoring.test.ts` pins the behavior down (run with
 `node --import tsx --test test/scoring.test.ts`; `test/clubLocator.test.ts`
-covers reading courses and pars out of an Overpass response). Stableford would
+covers reading courses and pars out of an Overpass response, and
+`test/notificationPlan.test.ts` covers which pushes are due). Stableford would
 be a change to `rankScorecards()` alone.
 
 ## Server endpoints (`/api`)
@@ -146,11 +149,74 @@ failure with a real status code.
 - **`delete-lobby`** — host (only while `scheduled`) or admin; cleans up
   every member's membership-index entry before recursively deleting the
   lobby.
+- **`lobby-notifications`** — sends whatever pushes are due (see
+  [Push notifications](#push-notifications)). Takes `CRON_SECRET` for every
+  live lobby, or a member's ID token plus `lobbyId` for just that lobby.
 - **`lobby-maintenance`** — the catch-up job: expires `scheduled` lobbies
   whose window ran out, finishes `live` lobbies whose window ran out, and
   deletes `finished`/`expired` lobbies past their 7-day cleanup deadline.
   Runs once a day via Vercel Cron (`vercel.json`) against `CRON_SECRET`, and
   has a "Run Maintenance Now" button in the Admin panel for admins.
+
+## Push notifications
+
+Two pushes, both only while a lobby is `live`:
+
+- **Score update.** When a player's strokes change, everyone else in the
+  lobby gets "Alex is -2 thru 7" (or "Alex finished at -2").
+- **Reminder.** A charged player whose own score hasn't changed for 15 minutes
+  gets a nudge to enter it. A hole takes about 13 minutes, so a player keeping
+  up never sees one. It goes out once per quiet spell and their next real score
+  starts a new one. Before their first score, the spell runs from the start of
+  the event, or from when they joined if they joined late. Spectators never get
+  one, and neither does a player who has finished. Spectators do still get
+  score updates.
+
+Both come from `processLobby()` in `api/_lib/lobbyNotifications.ts`, which has
+two callers:
+
+1. **The player's phone**, about 4 seconds after they stop changing a score,
+   so score pushes go out right away.
+2. **A scheduler, every minute.** This is what notices silence, since nothing
+   happens on any phone when nobody does anything. It also sends any score
+   push a phone didn't get to, for example if it locked first.
+
+Change `QUIET_MS` in `api/_lib/notificationPlan.ts` to adjust the 15 minutes.
+
+**What counts as a change.** Strokes are compared with what was last
+announced; `updatedAt` alone means nothing, because `Scorecard` re-saves the
+card whenever it opens. A second change from the same player within 30 seconds
+(`SCORE_PUSH_GAP_MS`) waits for a later run, so a correction doesn't buzz
+everyone twice. The state is updated in a transaction before sending, so
+overlapping runs can't send a push twice, but a send that fails isn't retried.
+
+**On the phone.** Messages are data-only, and `public/sw.js` is the only thing
+that shows them. It must show one for every message, or iOS drops the
+subscription. The sound is the phone's default notification sound: web push
+can't set a custom one, and a phone on silent or Do Not Disturb stays quiet.
+Players opt in on the lobby page (`PushPrompt`), and iPhones only offer web
+push (iOS 16.4+) to a site added to the Home Screen, which the prompt explains.
+Installed from there the app has its own sign-in, separate from Safari's.
+
+**Setup:**
+
+1. `firebase deploy --only firestore:rules` (for `pushTokens`).
+2. In the Firebase console, go to Project settings > Cloud Messaging > Web
+   Push certificates and generate a key pair. Set the public key as
+   `VITE_FIREBASE_VAPID_KEY` on Vercel and redeploy.
+3. Create a free job on [cron-job.org](https://cron-job.org): `GET
+   https://<your-domain>/api/lobby-notifications`, every minute, with the
+   header `Authorization: Bearer <CRON_SECRET>`. A healthy run returns
+   `{"lobbies":0,"errors":[]}`.
+
+The scheduler has to be external because Vercel's free tier rejects cron jobs
+that run more than once a day, so this can't go in `vercel.json` unless the
+project moves to a paid plan. Without it, score pushes still work but quiet
+reminders never fire. A run reads about two documents per member per live
+lobby, and one read when nothing is live.
+
+Vercel's free tier allows 12 functions and `/api` now has exactly 12, which is
+why both callers share one endpoint. A 13th fails the deployment.
 
 ## Deploying
 
@@ -174,6 +240,9 @@ you've also changed those.
 `lobby-maintenance` cron call — set it in your Vercel project and it's sent
 automatically as `Authorization: Bearer $CRON_SECRET` by Vercel Cron.
 Without it, maintenance still runs when an admin clicks the manual button.
+The notification scheduler uses the same secret, but it has to be entered in
+the scheduler by hand. `VITE_FIREBASE_VAPID_KEY` is covered under
+[Push notifications](#push-notifications).
 
 ## Running the rules tests
 
@@ -224,3 +293,7 @@ and the cron is a backstop for lobbies nobody ever opens again.
 6. Press Finish — confirm the modal shows final standings, and check
    **My Rounds** on both accounts.
 7. Confirm the lobby has disappeared from the main `/lobbies` list.
+8. With a phone on each account and alerts turned on (screen locked), enter a
+   score on one: the other should buzz within a few seconds and the scorer's
+   shouldn't. Then enter nothing: each should buzz once, 15-16 minutes after
+   their own last score.

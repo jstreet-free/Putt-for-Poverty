@@ -194,6 +194,51 @@ test('a client CAN still update their own score (control)', async () => {
   }));
 });
 
+test('a signed-in user CAN register their device for push (control)', async () => {
+  const asPlayer = testEnv.authenticatedContext(PLAYER).firestore();
+  await assertSucceeds(setDoc(doc(asPlayer, 'pushTokens/device-token'), {
+    uid: PLAYER, updatedAt: serverTimestamp(),
+  }));
+});
+
+test('a device passes to whoever signs in on it next', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'pushTokens/device-token'), { uid: PLAYER, updatedAt: Timestamp.now() });
+  });
+  const asHost = testEnv.authenticatedContext(HOST).firestore();
+  await assertSucceeds(setDoc(doc(asHost, 'pushTokens/device-token'), {
+    uid: HOST, updatedAt: serverTimestamp(),
+  }));
+});
+
+test('a client cannot register a device under someone else', async () => {
+  const asPlayer = testEnv.authenticatedContext(PLAYER).firestore();
+  await assertFails(setDoc(doc(asPlayer, 'pushTokens/device-token'), {
+    uid: HOST, updatedAt: serverTimestamp(),
+  }));
+});
+
+test('a logged-out visitor cannot register a device', async () => {
+  const asVisitor = testEnv.unauthenticatedContext().firestore();
+  await assertFails(setDoc(doc(asVisitor, 'pushTokens/device-token'), {
+    uid: PLAYER, updatedAt: serverTimestamp(),
+  }));
+});
+
+test('clients cannot read push tokens, even their own', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'pushTokens/device-token'), { uid: PLAYER, updatedAt: Timestamp.now() });
+  });
+  const asPlayer = testEnv.authenticatedContext(PLAYER).firestore();
+  await assertFails(getDoc(doc(asPlayer, 'pushTokens/device-token')));
+});
+
+test('clients cannot read the lobby notification state', async () => {
+  await seedLiveLobbyWithChargedMember();
+  const asPlayer = testEnv.authenticatedContext(PLAYER).firestore();
+  await assertFails(getDoc(doc(asPlayer, 'lobbies/lobby1/notifications/state')));
+});
+
 // To run these tests locally:
 //   1. npx firebase-tools emulators:start --only firestore
 //   2. In another terminal: node --test test/firestore-rules.test.mjs

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { saveStrokes } from '../../lib/lobbyService';
+import { announceScoreSaved, saveStrokes } from '../../lib/lobbyService';
 import { DEFAULT_PAR, formatToPar, tallyStrokes } from '../../lib/lobbyScoring';
 import { Minus, Plus, Loader2, Eye } from 'lucide-react';
 
@@ -39,6 +39,7 @@ export function Scorecard({ lobbyId, holes, pars, player, isSpectator }: {
     saveTimer.current = setTimeout(() => {
       setSaving(true);
       saveStrokes(lobbyId, player, strokes)
+        .then(() => announceScoreSaved(lobbyId))
         .catch((err) => console.warn('Could not save strokes:', err))
         .finally(() => setSaving(false));
     }, SAVE_DEBOUNCE_MS);

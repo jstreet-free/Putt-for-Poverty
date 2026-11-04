@@ -160,6 +160,18 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // --- Push notifications ---
+    // One doc per device, keyed by its FCM token, owned by whoever signed in
+    // on it last, so a phone that changes hands stops getting the previous
+    // account's notifications. Tokens are unguessable and clients can never
+    // read this collection; only the server, sending pushes, does.
+    match /pushTokens/{token} {
+      allow create, update: if isSignedIn() &&
+                            incoming().keys().hasOnly(['uid', 'updatedAt']) &&
+                            incoming().uid == request.auth.uid &&
+                            incoming().updatedAt == request.time;
+    }
+
     // --- Lobbies ---
     // Every status transition (create, join, start — which charges credits,
     // finish — which scores and archives, delete, maintenance) happens

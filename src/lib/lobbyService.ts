@@ -4,9 +4,10 @@ import {
   limit as fbLimit, onSnapshot, query, serverTimestamp, setDoc, Timestamp,
 } from 'firebase/firestore';
 import { ClubRef, Lobby, LobbyLocation, LobbyMember, Scorecard } from '../types';
-import { apiAddLobbyMember, apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiSetLobbyPars, apiStartLobby } from './lobbyApi';
+import { apiAddLobbyMember, apiCreateLobby, apiDeleteLobby, apiFinishLobby, apiJoinLobby, apiNotifyLobby, apiSetLobbyPars, apiStartLobby } from './lobbyApi';
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+const ANNOUNCE_DELAY_MS = 4000;
 
 function membershipRef(userId: string, lobbyId: string) {
   return doc(db, 'users', userId, 'lobbyMemberships', lobbyId);
@@ -195,6 +196,17 @@ export async function saveStrokes(
     holesPlayed,
     updatedAt: serverTimestamp(),
   });
+}
+
+// Tells the server a score was saved, once the player stops tapping, so
+// adjusting one hole is one notification. The server works out what changed.
+// If the phone locks before this fires, the scheduled run sends it instead.
+let announceTimer: ReturnType<typeof setTimeout> | undefined;
+export function announceScoreSaved(lobbyId: string): void {
+  clearTimeout(announceTimer);
+  announceTimer = setTimeout(() => {
+    apiNotifyLobby(lobbyId).catch((err) => console.warn('Could not send score notification:', err));
+  }, ANNOUNCE_DELAY_MS);
 }
 
 export async function writeLobbyLocation(lobbyId: string, userId: string, lat: number, lng: number): Promise<void> {

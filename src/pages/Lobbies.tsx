@@ -16,6 +16,7 @@ import {
   lobbyStartMs, startLobby, subscribeToLobby, updateLobby,
 } from '../lib/lobbyService';
 import { LiveLobbyView } from '../components/lobby/LiveLobbyView';
+import { PushPrompt } from '../components/lobby/PushPrompt';
 import { draftFromCourse, HostParPanel, ParEditor } from '../components/lobby/ParEditor';
 import { MyParPanel } from '../components/lobby/MyParPanel';
 import { PlayerParsAdmin } from '../components/lobby/PlayerParsAdmin';
@@ -1044,6 +1045,10 @@ function LobbyDetailModal({ lobby: initialLobby, user, participant, isAdmin, has
             <AlertTriangle size={24} className="mx-auto text-slate-300" />
             <p className="text-sm font-bold text-slate-500">This lobby expired before the host started it. No credits were charged.</p>
           </div>
+        )}
+
+        {myMember && (lobby.status === 'scheduled' || lobby.status === 'live') && (
+          <PushPrompt uid={user.uid} />
         )}
 
         {/* --- Live: the event view --- */}
